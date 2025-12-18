@@ -270,7 +270,7 @@
   <div id="controls">
  <!-- НОВОЕ: поле для выбранного курса -->
   <label style="color:#cbd5e1; font-size:13px; display:flex; align-items:center; gap:6px;">
-    Selected HDG:
+    RWY HDG:
     <input type="number" id="input-hdg" min="0" max="360" value="0" 
            style="width:70px; padding:4px 8px; background:#1e293b; border:1px solid #475569; 
                   border-radius:4px; color:#e879f9; font-size:14px; font-weight:bold; text-align:center;">
@@ -301,6 +301,11 @@
     <label class="toggle-label">
       <input type="checkbox" id="chk-gs" checked onchange="toggleGsCorridor()">
       <span>Курс/глиссада (3D)</span>
+    </label>
+
+    <label class="toggle-label">
+  	<input type="checkbox" id="chk-path" onchange="togglePath()">
+ 	 <span>Путь</span>
     </label>
 
     <div class="divider"></div>
@@ -351,6 +356,9 @@ let cachedWindSpd = 0;
 let scene, renderer, camera3d, airplane3d, runwayMesh, gsPlane, locPlane;
 let gsVisible = true;
 let orbitControls;
+let pathLine = null;
+let pathPoints = [];
+let showPath = false;
 
 // canvas
 let pfdCanvas, pfdCtx;
@@ -824,7 +832,8 @@ function createAirplane() {
   airplane3d.add(htail);
 
   // Стартовая позиция
-  airplane3d.position.set(0, 100, 400);
+  airplane3d.position.set(0, 3, -255);
+  airplane3d.rotation.y = Math.PI / 2;
   airplane3d.castShadow = true;
   scene.add(airplane3d);
 }
@@ -836,6 +845,17 @@ function toggleGsCorridor() {
   if (gsPlane) gsPlane.visible = gsVisible;
   if (renderer && camera3d) renderer.render(scene, camera3d);
 }
+
+function togglePath() {
+  showPath = document.getElementById('chk-path').checked;
+  if (pathLine) {
+    pathLine.visible = showPath;
+  }
+  if (renderer && camera3d) {
+    renderer.render(scene, camera3d);
+  }
+}
+
 
 function update3D(d) {
   if (!airplane3d) return;
@@ -854,12 +874,19 @@ function update3D(d) {
   const gearHeight = 3;
   yPos = Math.max(gearHeight, altitudeMeters);
   
-  let xPos = 0;
-  if (d.locDeviation && altitudeMeters >= 1) {
-    xPos = d.locDeviation * 8;
-  }
-  
-  airplane3d.position.set(xPos, yPos, zPos);
+let xPos = 0;
+if (d.locDeviation && altitudeMeters > 1) {
+  // Реалистичный расчет бокового отклонения
+  // 1 точка LOC = 2.5° от центральной линии
+  // На расстоянии distNM это дает боковое смещение:
+  const distNM = d.distanceToThresholdNM || 0.1;
+  const deviationDegrees = d.locDeviation * 2.5; // 1 точка = 2.5°
+  const deviationRadians = (deviationDegrees * Math.PI) / 180;
+  const lateralOffsetNM = Math.tan(deviationRadians) * distNM;
+  const lateralOffsetMeters = lateralOffsetNM * 1852; // 1 NM = 1852 метра
+  xPos = lateralOffsetMeters;
+}
+airplane3d.position.set(xPos, yPos, zPos);
   
   const runwayHeading = selectedHeading;
   const planeHeading = d.heading || runwayHeading;
@@ -881,6 +908,33 @@ const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0),
 airplane3d.quaternion.copy(qYaw);
 airplane3d.quaternion.multiply(qPitch);
 airplane3d.quaternion.multiply(qRoll);
+
+  // Добавление точки пути
+  pathPoints.push(new THREE.Vector3(xPos, yPos, zPos));
+  
+  // Ограничиваем количество точек (последние 500)
+  if (pathPoints.length > 500) {
+    pathPoints.shift();
+  }
+  
+  // Обновление линии пути
+  if (pathLine) {
+    scene.remove(pathLine);
+  }
+  
+  if (pathPoints.length > 1) {
+    const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+    const pathMaterial = new THREE.LineBasicMaterial({ 
+      color: 0x00ff00, 
+      linewidth: 2,
+      transparent: true,
+      opacity: 0.8
+    });
+    pathLine = new THREE.Line(pathGeometry, pathMaterial);
+    pathLine.visible = showPath;
+    scene.add(pathLine);
+  }
+
 
 }
 
@@ -968,7 +1022,7 @@ function drawPFD(data) {
   
   // Altitude tape - справа
   const altTapeWidth = Math.max(60, w * 0.13);
-  drawAltitudeTapeFull(ctx, w - altTapeWidth * 0.7, cy, altTapeWidth * 0.8, tapeHeight, data, scale);
+  drawAltitudeTapeFull(ctx, w - altTapeWidth * 1.2, cy, altTapeWidth * 0.7, tapeHeight, data, scale);
   
   // Vertical speed - крайняя правая
   const vsWidth = Math.max(25, w * 0.05);
@@ -1306,18 +1360,6 @@ function drawSpeedTapeFull(ctx, x, y, w, h, data, scale = 1) {
   ctx.lineWidth = 1.5 * scale;
   ctx.strokeRect(x - w / 2, y - h / 2, w, h);
   
-  // Current speed box
-  ctx.fillStyle = '#000';
-  ctx.fillRect(x - w / 2 - 5 * scale, y - 26 * scale, w + 10 * scale, 52 * scale);
-  ctx.strokeStyle = '#10b981';
-  ctx.lineWidth = 2.5 * scale;
-  ctx.strokeRect(x - w / 2 - 5 * scale, y - 26 * scale, w + 10 * scale, 52 * scale);
-  
-  ctx.fillStyle = '#10b981';
-  ctx.font = `bold ${Math.round(26 * scale)}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillText(Math.round(speed), x, y + 10 * scale);
-  
   // Speed tape
   ctx.save();
   ctx.beginPath();
@@ -1344,6 +1386,22 @@ function drawSpeedTapeFull(ctx, x, y, w, h, data, scale = 1) {
     ctx.fillText(s.toString(), x + w / 2 - 20 * scale, sy + 4 * scale);
   }
   ctx.restore();
+  
+  // Current speed box - РИСУЕТСЯ ПОВЕРХ ЛЕНТЫ
+  const boxHeight = 36 * scale;
+  const boxPadding = 3 * scale;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  ctx.strokeStyle = '#10b981';
+  ctx.lineWidth = 2 * scale;
+  ctx.strokeRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  
+  ctx.fillStyle = '#10b981';
+  ctx.font = `bold ${Math.round(18 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(Math.round(speed), x, y);
+  ctx.textBaseline = 'alphabetic';
   
   // Ground speed
   const groundSpeed = data.groundSpeed || 0;
@@ -1375,18 +1433,6 @@ function drawAltitudeTapeFull(ctx, x, y, w, h, data, scale = 1) {
   ctx.font = `bold ${Math.round(15 * scale)}px monospace`;
   ctx.textAlign = 'center';
   ctx.fillText(selectedAlt.toString(), x, y - h / 2 - 8 * scale);
-  
-  // Current altitude box
-  ctx.fillStyle = '#000';
-  ctx.fillRect(x - w / 2 - 5 * scale, y - 26 * scale, w + 10 * scale, 52 * scale);
-  ctx.strokeStyle = '#10b981';
-  ctx.lineWidth = 2.5 * scale;
-  ctx.strokeRect(x - w / 2 - 5 * scale, y - 26 * scale, w + 10 * scale, 52 * scale);
-  
-  ctx.fillStyle = '#10b981';
-  ctx.font = `bold ${Math.round(23 * scale)}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillText(Math.round(alt), x, y + 8 * scale);
   
   // Altitude tape
   ctx.save();
@@ -1423,6 +1469,22 @@ function drawAltitudeTapeFull(ctx, x, y, w, h, data, scale = 1) {
     }
   }
   ctx.restore();
+  
+  // Current altitude box - РИСУЕТСЯ ПОВЕРХ ЛЕНТЫ
+  const boxHeight = 36 * scale;
+  const boxPadding = 3 * scale;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  ctx.strokeStyle = '#10b981';
+  ctx.lineWidth = 2 * scale;
+  ctx.strokeRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  
+  ctx.fillStyle = '#10b981';
+  ctx.font = `bold ${Math.round(17 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(Math.round(alt), x, y);
+  ctx.textBaseline = 'alphabetic';
 }
 
 function drawVerticalSpeedFull(ctx, x, y, w, h, data, scale = 1) {
@@ -1794,7 +1856,8 @@ function handleFile(e) {
       // ИСПРАВЛЕНО: forward-fill для пропущенных значений ветра
       let lastWindSpeed = 0;
       let lastWindDir = 0;
-      
+      let lastLocDeviation = null;
+      let lastGsDeviation = null;
       const raw = rows.map((r, i) => {
         // Обновляем кеш, если есть новое значение
         if (r["Vw"] !== undefined && r["Vw"] !== null && r["Vw"] !== "") {
@@ -1812,8 +1875,18 @@ function handleFile(e) {
           airspeed: parseFloat(r["Vcom"]) || 0,
           groundSpeed: parseFloat(r["Vgr"]) || 0,
           verticalSpeed: parseFloat(r["Vy"]) || 0,
-          locDeviation: r["LOCdev.l"] !== undefined ? parseFloat(r["LOCdev.l"]) : null,
-          gsDeviation: r["GSdev.l"] !== undefined ? parseFloat(r["GSdev.l"]) : null,
+locDeviation: (() => {
+  if (r['LOCdev.l'] !== undefined && r['LOCdev.l'] !== '' && r['LOCdev.l'] !== null) {
+    lastLocDeviation = parseFloat(r['LOCdev.l']);
+  }
+  return lastLocDeviation;
+})(),
+gsDeviation: (() => {
+  if (r['GSdev.l'] !== undefined && r['GSdev.l'] !== '' && r['GSdev.l'] !== null) {
+    lastGsDeviation = parseFloat(r['GSdev.l']);
+  }
+  return lastGsDeviation;
+})(),
           windSpeed: lastWindSpeed,      // используем кешированное
           windDirection: lastWindDir,    // используем кешированное
           onGround: r["AirGr"] === "ground",
@@ -1997,6 +2070,11 @@ function pause() {
 function stopPlayback() {
   pause();
   currentFrame = 0;
+  pathPoints = []; // Очистка пути
+  if (pathLine) {
+    scene.remove(pathLine);
+    pathLine = null;
+  }
   updateAllViews();
 }
 function skipTime(sec) {
@@ -2045,8 +2123,6 @@ function updateAllViews() {
   
   // Обновляем все виды
   drawPFD(d);
-  drawSide(d);
-  drawTop(d);
   update3D(d);
   
   // Обновляем таймлайн
@@ -2054,7 +2130,7 @@ function updateAllViews() {
   if (tl && !tl.matches(':active')) {
     tl.value = (currentFrame / totalFrames) * 100;
   }
-  
+    updateTimelineLabel();
   // Обновляем время
   const timeEl = document.getElementById("current-time");
   if (timeEl) {
@@ -2063,6 +2139,7 @@ function updateAllViews() {
     const s = Math.floor(sec % 60);
     timeEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
   }
+
 }
 
 function initSelectedHeading() {
