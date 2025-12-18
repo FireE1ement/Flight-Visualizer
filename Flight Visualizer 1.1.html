@@ -896,7 +896,7 @@ airplane3d.position.set(xPos, yPos, zPos);
   while (headingDiff < -180) headingDiff += 360;
   
  const yaw = Math.PI/2 - THREE.MathUtils.degToRad(headingDiff);
-const pitch = THREE.MathUtils.degToRad(-d.pitch);
+const pitch = THREE.MathUtils.degToRad(d.pitch);
 const roll = THREE.MathUtils.degToRad(d.roll);
 
 // Правильная последовательность: сначала Roll, потом Pitch, потом Yaw
@@ -1103,7 +1103,7 @@ function drawWindCompact(ctx, x, y, data, scale = 1) {
 }
 
 function drawAttitudeFull(ctx, cx, cy, size, data, scale = 1) {
-  const pitch = data.pitch;
+  const pitch = -data.pitch;
   const roll = data.roll;
   
   ctx.save();
