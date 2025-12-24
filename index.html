@@ -1,0 +1,3611 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Flight Visualizer - B737 NG PFD</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #0f172a;
+      color:#fff;
+      overflow:auto;
+    }
+    #app {
+      width:100vw;
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+    }
+    header {
+      padding:12px 20px;
+      background:#020617;
+      border-bottom:1px solid #1e293b;
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    header h1 { font-size:20px; font-weight:600; }
+    
+    #content {
+      flex:1;
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+      padding:10px;
+      min-height:0;
+    }
+    .panel {
+      background:#020617;
+      border:1px solid #1e293b;
+      border-radius:8px;
+      position:relative;
+      overflow:hidden;
+      display:flex;
+      flex-direction:column;
+    }
+    .panel-title {
+      font-size:13px;
+      padding:6px 12px;
+      border-bottom:1px solid #1e293b;
+      background:#030712;
+      text-transform:uppercase;
+      letter-spacing:0.05em;
+      color:#94a3b8;
+      font-weight:600;
+    }
+    .panel-body {
+      flex:1;
+      position:relative;
+      display:flex;
+      flex-direction:column;
+    }
+    
+    /* PFD всегда слева */
+    #panel-pfd {
+      grid-column:1;
+      grid-row:1;
+    }
+    
+    /* Правая панель с вкладками */
+    #panel-views {
+      grid-column:2;
+      grid-row:1;
+    }
+    
+    /* Вкладки */
+    .tabs {
+      display:flex;
+      background:#030712;
+      border-bottom:1px solid #1e293b;
+    }
+    .tab-btn {
+      flex:1;
+      padding:8px 12px;
+      background:transparent;
+      border:none;
+      border-right:1px solid #1e293b;
+      color:#94a3b8;
+      font-size:12px;
+      cursor:pointer;
+      transition:all 0.2s;
+      text-transform:uppercase;
+      letter-spacing:0.05em;
+      font-weight:600;
+    }
+    .tab-btn:last-child { border-right:none; }
+    .tab-btn:hover { background:#1e293b; }
+    .tab-btn.active {
+      background:#1e40af;
+      color:#fff;
+    }
+    
+    .tab-content {
+      display:none;
+      flex:1;
+      position:relative;
+    }
+    .tab-content.active {
+      display:flex;
+    }
+    
+    canvas {
+      width:100%;
+      height:100%;
+      display:block;
+    }
+
+    #controls {
+      padding:10px 16px;
+      border-top:1px solid #1e293b;
+      background:#020617;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-items:center;
+    }
+    button {
+      background:#1e293b;
+      color:#e2e8f0;
+      border:1px solid #334155;
+      border-radius:5px;
+      padding:6px 12px;
+      font-size:13px;
+      cursor:pointer;
+      transition:all 0.2s;
+      font-weight:500;
+    }
+    button:hover { border-color:#60a5fa; background:#334155; }
+    button:disabled { opacity:0.3; cursor:not-allowed; }
+    button.active {
+      background:#1d4ed8;
+      border-color:#60a5fa;
+      color:#fff;
+    }
+    #file-input { display:none; }
+    #timeline {
+      flex:1;
+      appearance:none;
+      height:7px;
+      background:#1e293b;
+      border-radius:999px;
+      outline:none;
+      min-width:200px;
+    }
+    #timeline::-webkit-slider-thumb {
+      appearance:none;
+      width:16px; height:16px;
+      border-radius:50%;
+      background:#60a5fa;
+      box-shadow:0 0 8px rgba(96,165,250,0.6);
+      cursor:pointer;
+    }
+    #timeline::-moz-range-thumb {
+      width:16px; height:16px;
+      border-radius:50%;
+      background:#60a5fa;
+      border:none;
+      cursor:pointer;
+    }
+    .time-label {
+      font-family:"Consolas","Courier New",monospace;
+      font-size:13px;
+      min-width:100px;
+      text-align:right;
+      color:#cbd5e1;
+    }
+    #loading {
+      position:fixed; inset:0;
+      background:rgba(0,0,0,0.8);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:100;
+    }
+    #loading-inner {
+      background:#020617;
+      border:1px solid #475569;
+      border-radius:10px;
+      padding:20px 32px;
+      text-align:center;
+      font-size:15px;
+    }
+    #loading-inner div {
+      width:40px; height:40px;
+      border-radius:50%;
+      border:4px solid #475569;
+      border-top-color:#60a5fa;
+      margin:0 auto 12px;
+      animation:spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform:rotate(360deg); }
+    }
+    .toggle-label {
+      display:flex; align-items:center; gap:6px;
+      font-size:13px;
+      color:#cbd5e1;
+    }
+    input[type="checkbox"] {
+      width:16px; height:16px;
+      cursor:pointer;
+    }
+    .control-group {
+      display:flex;
+      gap:6px;
+      align-items:center;
+    }
+    .divider {
+      width:1px;
+      height:24px;
+      background:#334155;
+      margin:0 4px;
+    }
+    @media(max-width:1200px){
+      #content {
+        grid-template-columns:1fr;
+        grid-template-rows: auto auto;
+      }
+      #panel-pfd { grid-column:1; grid-row:1; min-height:400px; }
+      #panel-views { grid-column:1; grid-row:2; min-height:400px; }
+    }
+	
+/* ПРАВАЯ DEBUG ПАНЕЛЬ */
+/* ПРАВАЯ DEBUG ПАНЕЛЬ (Обновлено) */
+#debug-panel {
+  display: none;
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  width: auto;
+  min-width: 200px; /* Сделал чуть уже */
+  max-width: 350px;
+  
+  /* АВТОМАТИЧЕСКАЯ ВЫСОТА И СКРОЛЛ */
+  max-height: calc(100vh - 100px); /* Ограничение по высоте экрана */
+  display: flex; /* Flex для правильного скролла контента */
+  flex-direction: column;
+  
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: -5px 5px 15px rgba(0,0,0,0.5);
+  z-index: 900;
+  color: #cbd5e1;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 11px; /* Чуть меньше шрифт */
+}
+
+#debug-header {
+  padding: 6px 10px; /* Компактнее */
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0; /* Заголовок не сжимается */
+}
+
+#debug-content {
+  padding: 5px 10px;
+  overflow-y: auto; /* ВЕРТИКАЛЬНЫЙ СКРОЛЛ ТОЛЬКО ЗДЕСЬ */
+  flex-grow: 1; /* Занимает все доступное место */
+}
+
+/* Скроллбар для Webkit (Chrome, Safari) - чтобы был тонким */
+#debug-content::-webkit-scrollbar {
+  width: 6px;
+}
+#debug-content::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+#debug-content::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 1px 0; /* МИНИМАЛЬНЫЙ ОТСТУП МЕЖДУ СТРОКАМИ */
+  border-bottom: 1px solid #1e293b;
+  line-height: 1.2; /* Компактная высота строки */
+}
+.debug-row:last-child {
+  border-bottom: none;
+}
+
+.debug-key { color: #94a3b8; }
+.debug-val { color: #60a5fa; font-weight: bold; text-align: right; padding-left: 10px; }
+.debug-val.null { color: #ef4444; }
+	
+.path-toggle-group {
+  display: flex;
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 2px;
+  border: 1px solid #475569;
+  margin-right: 10px; /* отступ от других кнопок */
+}
+
+.path-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.path-btn:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.05);
+}
+
+.path-btn.active {
+  background: #3b82f6; /* Активный синий */
+  color: white;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+/* Группа для инпута скорости */
+.speed-input-group {
+  display: flex;
+  align-items: center;
+  background: #1e293b;
+  border-radius: 4px;
+  border: 1px solid #475569;
+  overflow: hidden;
+}
+
+/* Поле ввода */
+#speed-input {
+  width: 50px;
+  background: transparent;
+  border: none;
+  color: #e2e8f0;
+  text-align: center;
+  font-family: monospace;
+  font-size: 14px;
+  padding: 4px 0;
+  -moz-appearance: textfield; /* убрать стандартные стрелки */
+}
+#speed-input::-webkit-outer-spin-button,
+#speed-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+#speed-input:focus {
+  outline: none;
+  background: #334155;
+}
+
+/* Кнопки +/- */
+.speed-step-btn {
+  background: #334155;
+  color: #94a3b8;
+  border: none;
+  width: 24px;
+  height: 28px;
+  cursor: pointer;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.speed-step-btn:hover {
+  background: #475569;
+  color: #fff;
+}
+
+/* Контейнер 3D вида должен быть relative */
+#view-3d {
+  position: relative; 
+  /* ... остальные стили ... */
+}
+
+#compass-container {
+  position: absolute;
+  top: 10px;      /* В правом верхнем углу */
+  right: 10px;
+  width: 50px;    /* Чуть компактнее */
+  height: 50px;
+  background: rgba(30, 41, 59, 0.4); /* Прозрачнее */
+  border-radius: 50%;
+  border: 1px solid #64748b; /* Тонкая рамка */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  z-index: 10;    /* Поверх canvas */
+  /* box-shadow удален */
+}
+
+#compass-ring {
+  color: #f1f5f9;
+  font-weight: bold;
+  font-family: sans-serif;
+  font-size: 8px;
+  position: absolute;
+  top: 1px; 
+}
+
+#compass-arrow {
+  width: 0; 
+  height: 0; 
+  border-left: 2px solid transparent;
+  border-right: 2px solid transparent;
+  border-bottom: 15px solid #ef4444; /* Треугольник вместо полоски */
+  position: absolute;
+  top: 10px; /* Под буквой N */
+}
+
+
+  </style>
+</head>
+<body>
+<div id="app">
+  
+
+  <div id="content">
+    <!-- PFD слева -->
+    <div class="panel" id="panel-pfd">
+      
+      <div class="panel-body">
+        <canvas id="canvas-pfd"></canvas>
+      </div>
+    </div>
+
+    <!-- Правая панель с вкладками -->
+    <div class="panel" id="panel-views">
+      <div class="panel-body">
+        <div class="tab-content active" id="tab-3d">
+          <canvas id="canvas-3d"></canvas>
+          <div id="compass-container">
+            <div id="compass-ring">N</div>
+            <div id="compass-arrow"></div>
+        </div>
+      </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+ <!-- НОВОЕ: поле для выбранного курса -->
+  <label style="color:#cbd5e1; font-size:13px; display:flex; align-items:center; gap:6px;">
+    RWY HDG:
+    <input type="number" id="input-hdg" min="0" max="360" value="0" 
+           style="width:70px; padding:4px 8px; background:#1e293b; border:1px solid #475569; 
+                  border-radius:4px; color:#e879f9; font-size:14px; font-weight:bold; text-align:center;">
+  </label>
+	<div class="divider"></div>
+
+<button id="btn-debug" class="debug-btn" onclick="toggleDebug()">🐞 Debug</button>
+
+
+	
+  <div class="divider"></div>
+
+    <button id="btn-load" onclick="loadFile()">📂 Загрузить файл</button>
+    <input type="file" id="file-input" accept=".xlsx,.xls">
+
+    <div class="divider"></div>
+
+    <button id="btn-play" onclick="togglePlay()" disabled>▶️ Play</button>
+    <button id="btn-stop" onclick="stopPlayback()" disabled>⏹ Stop</button>
+
+    <div class="divider"></div>
+
+    <button onclick="skipTime(-10)" id="btn-b10" disabled>⏮ -10s</button>
+    <button onclick="skipTime(-1)"  id="btn-b1"  disabled>⏪ -1s</button>
+    <input type="range" id="timeline" min="0" max="100" value="0" disabled>
+    <button onclick="skipTime(1)"  id="btn-f1"  disabled>+1s ⏩</button>
+    <button onclick="skipTime(10)" id="btn-f10" disabled>+10s ⏭</button>
+
+    <span class="time-label" id="time-label">00:00 / 00:00</span>
+
+    <div class="divider"></div>
+
+    <label class="toggle-label">
+      <input type="checkbox" id="chk-gs" checked onchange="toggleGsCorridor()">
+      <span>Курс/глиссада (3D)</span>
+    </label>
+
+    <div class="path-toggle-group">
+      <button class="path-btn active" data-mode="none" title="Скрыть путь">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6L6 18M6 6l12 12"></path>
+        </svg>
+      </button>
+      <button class="path-btn" data-mode="trail" title="След за самолётом">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+           <path d="M2 12h5l3-5 4 10 3-5h5"/>
+        </svg>
+      </button>
+      <button class="path-btn" data-mode="full" title="Весь путь">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <path d="M9 12l2 2 4-4" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="divider"></div>
+
+    <span style="color:#cbd5e1; font-size:13px;">Скорость:</span>
+    <div class="control-group">
+      <span style="margin-right: 8px; color: #94a3b8; font-size: 14px;">Скорость:</span>
+    <div class="control-group speed-input-group">
+      <!-- Кнопка минус -->
+      <button onclick="changeSpeedBy(-1)" class="speed-step-btn" title="Уменьшить">-</button>
+      
+      <!-- Поле ввода -->
+      <input type="number" id="speed-input" value="1" step="0.25" min="0.03125" max="10" 
+             onchange="setSpeedFromInput()" title="Скорость воспроизведения">
+             
+      <!-- Кнопка плюс -->
+      <button onclick="changeSpeedBy(1)" class="speed-step-btn" title="Увеличить">+</button>
+    </div>
+    </div>
+  </div>
+</div>
+
+<div id="loading">
+  <div id="loading-inner">
+    <div></div>
+    <div>Загрузка и обработка данных…</div>
+  </div>
+</div>
+
+<!-- Модальное окно Debug -->
+<div id="debug-panel">
+  <div id="debug-header">
+    <span id="debug-title">🐞 Live Data</span>
+    <button onclick="toggleDebug()" style="background:none; border:none; color:#fff; cursor:pointer; font-size:16px;">&times;</button>
+  </div>
+  <div id="debug-content">
+    <!-- Данные будут здесь -->
+    <div style="padding:10px; text-align:center; color:#64748b;">Нет данных</div>
+  </div>
+</div>
+
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script> 
+
+// ================================================================
+// ГЛОБАЛЬНОЕ СОСТОЯНИЕ
+// ================================================================
+const FPS = 32;
+const FRAME_MS = 1000 / FPS;
+const GS_ANGLE_DEG = 3; // стандартная глиссада
+const HEIGHT_PER_NM = 300; // ft на 1 морскую милю при 3°
+
+let selectedHeading = 263;
+let flightData = [];
+let totalFrames = 0;
+let currentFrame = 0;
+let isPlaying = false;
+let playbackSpeed = 1;
+let timerId = null;
+
+let lastWindUpdateMs = 0;
+let cachedWindDir = 0;
+let cachedWindSpd = 0;
+let pathMode = 'none'; // 'none', 'trail', 'full'
+
+// three.js
+let scene, renderer, camera3d, airplane3d, runwayMesh, gsPlane, locPlane;
+let gsVisible = true;
+let orbitControls;
+let pathLine = null;
+let pathPoints = [];
+let showPath = false;
+let trailGroup = null;
+let trailLine = null;
+let trailWall = null;
+let trailDividers = null; 
+
+
+// canvas
+let pfdCanvas, pfdCtx;
+let sideCanvas, sideCtx;
+let topCanvas, topCtx;
+
+// для расчёта пути
+let pathMeta = {
+  totalDistanceNM: 10, // будем вычислять при загрузке
+};
+
+// ================================================================
+// ИНИЦИАЛИЗАЦИЯ
+// ================================================================
+window.addEventListener("load", () => {
+  init3D();
+  initPFD();
+  initTimeline();
+  initTabs();
+  initSelectedHeading();
+  initPathControls();
+  document.getElementById('debug-panel').style.display = 'none';
+  isDebugVisible = false;
+});
+
+// -------------------------------------------------
+// Вкладки
+// -------------------------------------------------
+function initTabs() {
+  const btns = document.querySelectorAll(".tab-btn");
+  btns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.tab;
+      btns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelectorAll(".tab-content").forEach(tc => tc.classList.remove("active"));
+      document.getElementById(target).classList.add("active");
+      
+      // после переключения вкладки перерисовываем, если есть данные
+      if (flightData.length) {
+        resize3D();
+        resizeSide();
+        resizeTop();
+        updateAllViews();
+      }
+    });
+  });
+}
+
+// -------------------------------------------------
+// 3D сцена
+// -------------------------------------------------
+// ================================================================
+// 3D СЦЕНА - ПОЛНАЯ ПЕРЕДЕЛКА
+// ================================================================
+
+function init3D() {
+  const canvas = document.getElementById("canvas-3d");
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap; // более мягкие тени
+  resize3D();
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+  
+  // УВЕЛИЧЕНА дистанция видимости: туман начинается с 2000м, полная непрозрачность на 8000м
+  scene.fog = new THREE.Fog(0x87ceeb, 2000, 8000);
+
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(500, 800, 300); // поднимаем выше и дальше
+  sun.castShadow = true;
+  
+  // УВЕЛИЧЕНА область теней для покрытия всей полосы
+  sun.shadow.camera.left = -2000;
+  sun.shadow.camera.right = 2000;
+  sun.shadow.camera.top = 2000;
+  sun.shadow.camera.bottom = -2000;
+  sun.shadow.camera.near = 100;
+  sun.shadow.camera.far = 3000;
+  sun.shadow.mapSize.width = 4096; // увеличено разрешение теней
+  sun.shadow.mapSize.height = 4096;
+  sun.shadow.bias = -0.0001; // устраняет артефакты теней
+  
+  scene.add(sun);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+camera3d = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 20000);
+  camera3d.position.set(0, 50, 100);
+
+  // OrbitControls для управления мышью
+orbitControls = new THREE.OrbitControls(camera3d, canvas);
+orbitControls.enableDamping = false;
+orbitControls.enablePan = false;  // Отключаем панорамирование
+orbitControls.minDistance = 10;
+orbitControls.maxDistance = 1000;
+orbitControls.maxPolarAngle = Math.PI / 2 + 0.3;
+orbitControls.autoRotate = false;  // Отключаем автоповорот
+
+
+
+  createGround();
+  createRunway();
+  createGlideSlopeCorridor();
+  createAirplane();
+
+  window.addEventListener("resize", resize3D);
+
+  // Принудительно вызываем resize после небольшой задержки
+  // чтобы убедиться, что контейнер получил свои размеры
+    setTimeout(() => {
+    resize3D();
+  }, 100);
+
+  // Анимационный цикл для обновления controls
+  animate3D();
+  
+}
+
+
+
+function createGround() {
+  // Земля: Делаем поменьше (например 10x10 км), так как она будет ездить за нами
+  const groundGeom = new THREE.PlaneGeometry(15000, 15000);
+  const groundMat = new THREE.MeshLambertMaterial({ 
+    color: 0x228b22,
+    depthWrite: false 
+  });
+  
+  // Сохраняем в глобальную переменную (или свойство window), чтобы видеть в animate3D
+  window.dynamicGround = new THREE.Mesh(groundGeom, groundMat);
+  
+  window.dynamicGround.rotation.x = -Math.PI / 2;
+  window.dynamicGround.position.y = -0.1; 
+  window.dynamicGround.receiveShadow = true;
+  window.dynamicGround.renderOrder = 0; 
+  
+  scene.add(window.dynamicGround);
+}
+
+// НОВАЯ ФУНКЦИЯ: постоянный рендеринг для OrbitControls
+function animate3D() {
+  requestAnimationFrame(animate3D);
+  
+  // Обновляем позицию камеры
+  if (airplane3d && orbitControls && camera3d) {
+    updateCamera();
+
+    // === ДОБАВЛЕНО: Двигаем землю за самолетом ===
+    if (window.dynamicGround) {
+        window.dynamicGround.position.x = airplane3d.position.x;
+        window.dynamicGround.position.z = airplane3d.position.z;
+    }
+    // =============================================
+  }
+  
+  if (renderer && camera3d && scene) {
+    updateCompass();
+    renderer.render(scene, camera3d);
+  }
+}
+
+function updateCompass() {
+  if (!orbitControls) return;
+
+  const compassEl = document.getElementById('compass-container');
+  if (!compassEl) return;
+
+  // 1. Угол камеры относительно оси Z сцены (в радианах)
+  // getAzimuthalAngle(): 0 = камера смотрит на -Z (вдоль полосы?)
+  // Нужно проверить экспериментально, но обычно 0 = +Z.
+  const camRad = orbitControls.getAzimuthalAngle();
+  const camDeg = camRad * (180 / Math.PI);
+
+  // 2. Угол "Севера" в сцене.
+  // В вашей сцене ось -Z (куда летит самолет при Heading=RunwayHeading) 
+  // соответствует курсу `selectedHeading`.
+  // Значит, Север (курс 0) отстоит от оси сцены на `-selectedHeading`.
+  
+  // Итоговый поворот компаса:
+  // Мы вращаем контейнер так, чтобы буква N указывала на север.
+  // Rotation = CameraAngle - RunwayHeading
+  
+  // Поправка может зависеть от начальной ориентации сцены. 
+  // Попробуйте такую формулу:
+  let rotation = camDeg - selectedHeading;
+  
+  // Добавляем 180, если компас перевернут (зависит от того, где у вас перед)
+  // Обычно в Three.js 0 радианов - это ось +Z (на зрителя).
+  // А мы летим в -Z. Разница 180.
+  rotation += 0; 
+
+  compassEl.style.transform = `rotate(${rotation}deg)`;
+}
+
+
+
+function resize3D() {
+  const canvas = document.getElementById('canvas-3d');
+  const parent = canvas.parentElement;
+  if (!parent) return;
+  
+  const w = parent.clientWidth;
+  const h = parent.clientHeight;
+  if (!renderer || !camera3d || !w || !h) return;
+  
+  // Устанавливаем правильный pixel ratio
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(w, h, false);
+  
+  camera3d.aspect = w / h;
+  camera3d.updateProjectionMatrix();
+}
+
+function createRunway() {
+  const runwayLen = 3500;
+  const runwayWidth = 60;
+  
+  // Геометрия полосы
+  const rwGeom = new THREE.PlaneGeometry(runwayWidth, runwayLen);
+  const rwMat = new THREE.MeshLambertMaterial({ 
+    color: 0x3a3a3a,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1
+  });
+  runwayMesh = new THREE.Mesh(rwGeom, rwMat);
+  runwayMesh.rotation.x = -Math.PI / 2;
+  
+  // Позиционируем так, чтобы начало (торец) было на Z = 30 (для красоты),
+  // а остальная полоса уходила в минус.
+  // Центр полосы будет в Z = 30 - (3500/2) = -1720
+  runwayMesh.position.set(0, 0, 30 - runwayLen / 2); 
+  runwayMesh.receiveShadow = true;
+  runwayMesh.renderOrder = 1;
+  scene.add(runwayMesh);
+
+  // Материал разметки
+  const lineMat = new THREE.MeshBasicMaterial({ 
+    color: 0xffffff,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2
+  });
+
+  // Центральная линия (штрих 30м через 30м)
+  // Рисуем от торца (Z=30) до конца (Z=-3470)
+  for (let z = -60; z > (30 - runwayLen); z -= 60) {
+    const segmentGeom = new THREE.PlaneGeometry(1.2, 30);
+    const segment = new THREE.Mesh(segmentGeom, lineMat);
+    segment.rotation.x = -Math.PI / 2;
+    segment.position.set(0, 0.01, z - 15); // Центр сегмента
+    segment.renderOrder = 2;
+    scene.add(segment);
+  }
+
+  // Порог ВПП ("Зебра") на Z = 20 (чуть отступив от края 30)
+  const thresholdZ = 7.5;
+  const stripeGeom = new THREE.PlaneGeometry(3.6, 45); // Полоски шириной 3.6м, длиной 45м
+  // 12 полос по всей ширине (стандарт ICAO для 60м полосы)
+  for (let i = 0; i < 12; i++) {
+    // Распределяем от -27 до +27
+    const x = -27 + i * (54/11);
+    const stripe = new THREE.Mesh(stripeGeom, lineMat);
+    stripe.rotation.x = -Math.PI / 2;
+    stripe.position.set(x, 0.01, thresholdZ);
+    stripe.renderOrder = 2;
+    scene.add(stripe);
+  }
+
+  // ЗОНА ПРИЗЕМЛЕНИЯ (Touchdown Zone)
+  // Точка приземления (TDZ) обычно в 300м (1000ft) от торца.
+  // Торец Z=30. Значит TDZ Z = 30 - 300 = -270.
+  // В нашем коде update3D мы использовали -215. Давайте синхронизируем.
+  // Пусть целевая точка касания будет -270.
+  // (Не забудьте обновить sceneTouchdownZ в update3D!)
+  
+  const touchdownZ = -270; 
+
+  // Большие блоки (Aiming Point) - начало на 400м (1312ft) от торца по ICAO, 
+  // но часто 300м (1000ft). Оставим на 300м.
+  const aimingBlockGeom = new THREE.PlaneGeometry(10, 45); // Широкие блоки
+  [-12, 12].forEach(x => {
+      const block = new THREE.Mesh(aimingBlockGeom, lineMat);
+      block.rotation.x = -Math.PI / 2;
+      block.position.set(x, 0.01, touchdownZ);
+      block.renderOrder = 2;
+      scene.add(block);
+  });
+
+  // Остальная разметка зоны приземления (пары и тройки полос)
+  // Рисуются каждые 150м (500ft) от торца.
+  // 150м: Z = 30 - 150 = -120
+  // 300м: (уже нарисовали Aiming Point)
+  // 450м: Z = -420
+  // 600м: Z = -570
+  // 750м: Z = -720
+  // 900м: Z = -870
+
+  const markGeom = new THREE.PlaneGeometry(3, 22);
+  const marks = [
+      { z: -120, count: 3 }, // Три полоски
+      { z: -420, count: 2 }, // Две
+      { z: -570, count: 2 },
+      { z: -720, count: 1 }, // Одна
+      { z: -870, count: 1 }
+  ];
+
+  marks.forEach(m => {
+      for (let side = -1; side <= 1; side += 2) { // Лево/Право
+          for (let k = 0; k < m.count; k++) {
+              // Смещение внутри группы
+              const offset = (k - (m.count-1)/2) * 5; 
+              const x = side * (12 + offset + (m.count > 1 ? 5 : 0)); // Сдвигаем от центра
+              // Упрощенно: просто ставим на расстоянии
+              const finalX = side * (9 + k*5 + 8); 
+              
+              const mark = new THREE.Mesh(markGeom, lineMat);
+              mark.rotation.x = -Math.PI / 2;
+              mark.position.set(finalX, 0.01, m.z);
+              mark.renderOrder = 2;
+              scene.add(mark);
+          }
+      }
+  });
+
+  // Боковые линии (Side stripes)
+  const sideGeom = new THREE.PlaneGeometry(1.8, runwayLen);
+  [-28.5, 28.5].forEach(x => {
+    const side = new THREE.Mesh(sideGeom, lineMat);
+    side.rotation.x = -Math.PI / 2;
+    side.position.set(x, 0.01, 30 - runwayLen / 2);
+    side.renderOrder = 2;
+    scene.add(side);
+  });
+
+  // Номер ВПП
+  createRunwayNumber(-40); // Z=50 (перед зеброй)
+}
+
+
+function createRunwayNumber(z) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; // увеличено разрешение
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  
+  // Прозрачный фон
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 180px Arial'; // увеличен размер шрифта
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  // Вычисляем номер ВПП из selectedHeading
+  const runwayNumber = Math.round(selectedHeading / 10) % 36;
+  const displayNumber = runwayNumber === 0 ? 36 : runwayNumber;
+  
+  ctx.fillText(displayNumber.toString().padStart(2, '0'), 256, 128);
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  
+  const numMat = new THREE.MeshBasicMaterial({ 
+    map: texture, 
+    transparent: true,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3
+  });
+  
+  const numGeom = new THREE.PlaneGeometry(50, 25);
+  
+  // Удаляем старый номер если есть
+  const oldNumber = scene.getObjectByName('runwayNumber');
+  if (oldNumber) scene.remove(oldNumber);
+  
+  const number = new THREE.Mesh(numGeom, numMat);
+  number.rotation.x = -Math.PI / 2;
+  number.position.set(0, 0.02, z); // чуть приподнято над полосой
+  number.name = 'runwayNumber';
+  number.renderOrder = 3; // рендерим поверх всего
+  scene.add(number);
+}
+
+function createGlideSlopeCorridor() {
+  const corridorGroup = new THREE.Group();
+  corridorGroup.visible = true;
+
+  // ГЛИССАДА (расширяющаяся трапециевидная плоскость)
+  // Глиссада 3° от точки на высоте ~300м до точки касания (большие прямоугольники)
+  const gsAngle = 3 * Math.PI / 180; // 3 градуса в радианах
+  const locDevAngle = 0.8 * Math.PI / 180;
+  // Точка касания на z = -270 (большие прямоугольники)
+  const touchdownZ = -270;
+  const dist10NM = 18520; 
+  // Начало глиссады: на высоте 300м, это примерно на расстоянии 300/tan(3°) ≈ 5730м от точки касания
+  const gsStartZ = touchdownZ + 18520;
+  const gsEndZ = touchdownZ; // точка касания
+  const gsStartHeight = dist10NM * Math.tan(gsAngle); 
+  const gsEndHeight = 0; // высота в точке касания
+  
+  const gsLength = gsStartZ - gsEndZ; // длина проекции на землю
+  const gsWidthStart = 2 * (dist10NM * Math.tan(locDevAngle));
+  const gsWidthEnd = 60; // ширина в конце (ширина полосы)
+  
+  // Создаём трапециевидную геометрию
+  const gsGeom = new THREE.BufferGeometry();
+  
+  // Вершины трапеции (4 угла)
+  const vertices = new Float32Array([
+    // Нижние вершины (у точки касания, z = 0 в локальных координатах)
+    -gsWidthEnd/2, -gsLength/2, 0,  // левый нижний
+    gsWidthEnd/2, -gsLength/2, 0,   // правый нижний
+    
+    // Верхние вершины (в начале глиссады, z = gsLength/2)
+    -gsWidthStart/2, gsLength/2, 0, // левый верхний
+    gsWidthStart/2, gsLength/2, 0   // правый верхний
+  ]);
+  
+  // Индексы для двух треугольников, образующих трапецию
+  const indices = new Uint16Array([
+    0, 1, 2,  // первый треугольник
+    1, 3, 2   // второй треугольник
+  ]);
+  
+  gsGeom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  gsGeom.setIndex(new THREE.BufferAttribute(indices, 1));
+  gsGeom.computeVertexNormals();
+  
+  const gsMat = new THREE.MeshBasicMaterial({
+    color: 0xff00ff,
+    transparent: true,
+    opacity: 0.05,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+
+  gsPlane = new THREE.Mesh(gsGeom, gsMat);
+  
+  // Позиционируем глиссаду
+  const gsCenterZ = (gsStartZ + gsEndZ) / 2;
+  const gsCenterHeight = (gsStartHeight + gsEndHeight) / 2;
+  
+  gsPlane.position.set(0, gsCenterHeight, gsCenterZ);
+  gsPlane.rotation.x = Math.PI / 2 - gsAngle; // наклон на 3°
+  
+  corridorGroup.add(gsPlane);
+
+  // Центральная линия глиссады для лучшей видимости курса
+  const gsLineGeometry = new THREE.BufferGeometry();
+  const gsLineVertices = new Float32Array([
+    0, gsStartHeight, gsStartZ,  // начало глиссады
+    0, gsEndHeight, gsEndZ       // конец в точке касания
+  ]);
+  gsLineGeometry.setAttribute('position', new THREE.BufferAttribute(gsLineVertices, 3));
+  
+  const gsLineMaterial = new THREE.LineBasicMaterial({ 
+    color: 0xff00ff, 
+    linewidth: 3,
+    transparent: true,
+    opacity: 0.5
+  });
+  
+  const gsLine = new THREE.Line(gsLineGeometry, gsLineMaterial);
+  corridorGroup.add(gsLine);
+
+  // Боковые линии трапеции для лучшей видимости границ
+  const leftBorder = new THREE.BufferGeometry();
+  const leftVertices = new Float32Array([
+    -gsWidthEnd/2, gsEndHeight, gsEndZ,
+    -gsWidthStart/2, gsStartHeight, gsStartZ
+  ]);
+  leftBorder.setAttribute('position', new THREE.BufferAttribute(leftVertices, 3));
+  
+  const borderMaterial = new THREE.LineBasicMaterial({ 
+    color: 0xff00ff, 
+    linewidth: 2,
+    transparent: true,
+    opacity: 0.2
+  });
+  
+  const leftBorderLine = new THREE.Line(leftBorder, borderMaterial);
+  corridorGroup.add(leftBorderLine);
+
+  const rightBorder = new THREE.BufferGeometry();
+  const rightVertices = new Float32Array([
+    gsWidthEnd/2, gsEndHeight, gsEndZ,
+    gsWidthStart/2, gsStartHeight, gsStartZ
+  ]);
+  rightBorder.setAttribute('position', new THREE.BufferAttribute(rightVertices, 3));
+  
+  const rightBorderLine = new THREE.Line(rightBorder, borderMaterial.clone());
+  corridorGroup.add(rightBorderLine);
+
+  scene.add(corridorGroup);
+  locPlane = corridorGroup;
+}
+
+function createAirplane() {
+  if (airplane3d) scene.remove(airplane3d);
+
+  airplane3d = new THREE.Group();
+  
+  // Добавляем DoubleSide, чтобы избежать проблем с "черными" гранями
+  const matWhite = new THREE.MeshPhongMaterial({ color: 0xffffff, side: THREE.DoubleSide }); 
+  const matGrey = new THREE.MeshPhongMaterial({ color: 0xcccccc, side: THREE.DoubleSide });  
+  const matBlue = new THREE.MeshPhongMaterial({ color: 0x0077be, side: THREE.DoubleSide });  
+  const matDark = new THREE.MeshPhongMaterial({ color: 0x333333 });  
+  const matMetal = new THREE.MeshPhongMaterial({ color: 0x999999 }); 
+
+  const bodyRadius = 1.9;
+  const bodyLength = 28.0; 
+
+  // === 1. ФЮЗЕЛЯЖ ===
+  const bodyGeom = new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyLength, 32);
+  const body = new THREE.Mesh(bodyGeom, matWhite);
+  body.rotation.z = Math.PI / 2;
+  body.castShadow = true;
+  airplane3d.add(body);
+
+  // === 2. НОС ===
+  const noseGeom = new THREE.SphereGeometry(bodyRadius, 32, 16);
+  noseGeom.applyMatrix4(new THREE.Matrix4().makeScale(2.0, 1, 1)); 
+  const nose = new THREE.Mesh(noseGeom, matWhite);
+  nose.position.x = bodyLength / 2;
+  airplane3d.add(nose);
+
+
+
+  // === 3. ХВОСТ ===
+  const tailLen = 3.5;
+  const tailGeom = new THREE.CylinderGeometry(0.6, bodyRadius, tailLen, 32);
+  const tail = new THREE.Mesh(tailGeom, matWhite);
+  tail.rotation.z = Math.PI / 2;
+  tail.position.set(-bodyLength / 2 - tailLen / 2, 0, 0);
+  airplane3d.add(tail);
+
+  // === 4. КРЫЛЬЯ (Честные Shape для обеих сторон) ===
+  // Shape рисуется в XY.
+  // X - вдоль фюзеляжа (минус = назад). Y - размах.
+  
+  // ПРАВОЕ КРЫЛО (Y < 0)
+  const rWingShape = new THREE.Shape();
+  rWingShape.moveTo(0, 0); 
+  rWingShape.lineTo(-7, 0); 
+  rWingShape.lineTo(-13, -16); // Y = -16 (Вправо)
+  rWingShape.lineTo(-6, -16); 
+  rWingShape.lineTo(0, 0); 
+
+  const rWingGeom = new THREE.ExtrudeGeometry(rWingShape, { depth: 0.4, bevelEnabled: false });
+  rWingGeom.translate(0, 0, -0.2); // Центр по Z
+
+  const rWing = new THREE.Mesh(rWingGeom, matGrey);
+  rWing.rotation.x = Math.PI / 2; // Кладем в плоскость XZ
+  rWing.rotation.z = 0.05; 
+  rWing.position.set(4, -1.0, -1); 
+  rWing.castShadow = true;
+  airplane3d.add(rWing);
+
+  // ЛЕВОЕ КРЫЛО (Y > 0)
+  const lWingShape = new THREE.Shape();
+  lWingShape.moveTo(0, 0); 
+  lWingShape.lineTo(-7, 0); 
+  lWingShape.lineTo(-13, 16); // Y = +16 (Влево)
+  lWingShape.lineTo(-6, 16); 
+  lWingShape.lineTo(0, 0); 
+
+  const lWingGeom = new THREE.ExtrudeGeometry(lWingShape, { depth: 0.4, bevelEnabled: false });
+  lWingGeom.translate(0, 0, -0.2);
+
+  const lWing = new THREE.Mesh(lWingGeom, matGrey);
+  lWing.rotation.x = Math.PI / 2;
+  lWing.rotation.z = -0.05; 
+  lWing.position.set(4, -1.0, 1); 
+  lWing.castShadow = true;
+  airplane3d.add(lWing);
+
+
+  // === 5. КИЛЬ ===
+  const vShape = new THREE.Shape();
+  vShape.moveTo(0, 0); 
+  vShape.lineTo(-6, 0); 
+  vShape.lineTo(-9, 7.5); 
+  vShape.lineTo(-4, 7.5); 
+  vShape.lineTo(0, 0);
+
+  const vGeom = new THREE.ExtrudeGeometry(vShape, { depth: 0.4, bevelEnabled: false });
+  vGeom.translate(0, 0, -0.2);
+
+  const vTail = new THREE.Mesh(vGeom, matBlue);
+  vTail.position.set(-10, 1.5, 0);
+  vTail.castShadow = true;
+  airplane3d.add(vTail);
+
+
+  // === 6. СТАБИЛИЗАТОРЫ (Честные Shape) ===
+  
+  // ПРАВЫЙ (Y < 0)
+  const rStabShape = new THREE.Shape();
+  rStabShape.moveTo(0, 0);
+  rStabShape.lineTo(-4, 0);
+  rStabShape.lineTo(-6, -5.5);
+  rStabShape.lineTo(-2.5, -5.5);
+  rStabShape.lineTo(0, 0);
+
+  const rStabGeom = new THREE.ExtrudeGeometry(rStabShape, { depth: 0.3, bevelEnabled: false });
+  rStabGeom.translate(0, 0, -0.15);
+
+  const rStab = new THREE.Mesh(rStabGeom, matGrey);
+  rStab.rotation.x = Math.PI / 2;
+  rStab.position.set(-12, 1.0, -0.5); 
+  rStab.castShadow = true;
+  airplane3d.add(rStab);
+
+  // ЛЕВЫЙ (Y > 0)
+  const lStabShape = new THREE.Shape();
+  lStabShape.moveTo(0, 0);
+  lStabShape.lineTo(-4, 0);
+  lStabShape.lineTo(-6, 5.5);
+  lStabShape.lineTo(-2.5, 5.5);
+  lStabShape.lineTo(0, 0);
+
+  const lStabGeom = new THREE.ExtrudeGeometry(lStabShape, { depth: 0.3, bevelEnabled: false });
+  lStabGeom.translate(0, 0, -0.15);
+
+  const lStab = new THREE.Mesh(lStabGeom, matGrey);
+  lStab.rotation.x = Math.PI / 2;
+  lStab.position.set(-12, 1.0, 0.5);
+  lStab.castShadow = true;
+  airplane3d.add(lStab);
+
+  // === 7. ШАССИ ===
+  const wheelGeom = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 16);
+  wheelGeom.rotateX(Math.PI / 2); 
+
+  // Нос
+  const noseStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2.0), matMetal);
+  noseStrut.position.set(13, -2.5, 0); 
+  airplane3d.add(noseStrut);
+  const nWheel = new THREE.Mesh(wheelGeom, matDark);
+  nWheel.position.set(13, -3.5, 0);
+  airplane3d.add(nWheel);
+
+  // Основные
+  const mainStrutL = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2.5), matMetal);
+  mainStrutL.position.set(-1, -2.5, 3.0); 
+  airplane3d.add(mainStrutL);
+  const mWheelL = new THREE.Mesh(wheelGeom, matDark);
+  mWheelL.position.set(-1, -3.8, 3.0);
+  airplane3d.add(mWheelL);
+
+  const mainStrutR = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2.5), matMetal);
+  mainStrutR.position.set(-1, -2.5, -3.0);
+  airplane3d.add(mainStrutR);
+  const mWheelR = new THREE.Mesh(wheelGeom, matDark);
+  mWheelR.position.set(-1, -3.8, -3.0);
+  airplane3d.add(mWheelR);
+
+
+  // ФИНАЛ
+  airplane3d.rotation.y = Math.PI / 2;
+  const gearHeight = 4.2;
+  airplane3d.position.set(0, gearHeight, 0);
+
+  scene.add(airplane3d);
+}
+
+
+
+
+	function toggleGsCorridor() {
+	  gsVisible = document.getElementById("chk-gs").checked;
+	  if (locPlane) locPlane.visible = gsVisible;
+	  if (gsPlane) gsPlane.visible = gsVisible;
+	  if (renderer && camera3d) renderer.render(scene, camera3d);
+	}
+
+  function updatePathVisibility() {
+  if (!trailGroup) return;
+
+  // 1. Общая видимость
+  trailGroup.visible = (pathMode !== 'none');
+
+  // 2. Если режим изменился на ходу, нужно обновить DrawRange
+  // (вызовем обновление range принудительно)
+  updateTrailDrawRange(); 
+}
+
+function update3D(d) {
+  if (!airplane3d) return;
+  
+  // Координаты уже рассчитаны в calculateDistanceAndHeight
+  // Нам нужно только добавить смещение модели полосы в сцене (z = -215 - это точка касания в 3D мире)
+  const sceneTouchdownZ = -270; 
+  
+  // В calculateDistanceAndHeight: 0 = точка касания, отрицательные Z = подлет.
+  // В scene: -270 = точка касания.
+  // Значит:
+  let zPos = sceneTouchdownZ + d.zPos; 
+  let xPos = d.xPos; // Боковое смещение (метры)
+  
+  const gearHeight = 4.2; 
+    
+    // Используем интегрированную высоту
+    let hFt = d.integratedHeightFt;
+    if (hFt === undefined) hFt = d.radioAltitude || 0; // На всякий случай
+    
+    // Защита: не ниже 0 (относительно бетона)
+    if (hFt < 0) hFt = 0;
+
+    if (d.radioAltitude !== null && d.radioAltitude < 0) {
+         hFt = 0;
+    }
+    
+    let yPos = (hFt * 0.3048) + gearHeight;
+    
+    airplane3d.position.set(xPos, yPos, zPos);
+    
+    
+  // Вращение модели
+  const runwayHeading = selectedHeading;
+  const planeHeading = d.heading || runwayHeading;
+  let headingDiff = planeHeading - runwayHeading;
+  
+  // Нормализация угла
+  while (headingDiff > 180) headingDiff -= 360;
+  while (headingDiff < -180) headingDiff += 360;
+  
+  const yaw = Math.PI/2 - THREE.MathUtils.degToRad(headingDiff);
+  const pitch = THREE.MathUtils.degToRad(d.pitch);
+  const roll = THREE.MathUtils.degToRad(d.roll);
+
+  const qRoll = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), roll);
+  const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), pitch);
+  const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+  airplane3d.quaternion.copy(qYaw);
+  airplane3d.quaternion.multiply(qPitch);
+  airplane3d.quaternion.multiply(qRoll);
+
+
+}
+
+
+function updateCamera() {
+  if (!airplane3d || !orbitControls || !camera3d) return;
+  
+  // Получаем текущую сферическую позицию камеры относительно target
+  const spherical = new THREE.Spherical();
+  const offset = new THREE.Vector3();
+  
+  // Вычисляем offset от старого target
+  offset.copy(camera3d.position).sub(orbitControls.target);
+  spherical.setFromVector3(offset);
+  
+  // Обновляем target на позицию самолёта
+  orbitControls.target.copy(airplane3d.position);
+  
+  // Применяем тот же offset к новой позиции
+  offset.setFromSpherical(spherical);
+  camera3d.position.copy(airplane3d.position).add(offset);
+  
+  // Камера смотрит на самолёт
+  camera3d.lookAt(airplane3d.position);
+}
+
+// ========================================
+// PFD - АДАПТИВНАЯ ВЕРСИЯ
+// ========================================
+
+function initPFD() {
+  pfdCanvas = document.getElementById('canvas-pfd');
+  pfdCtx = pfdCanvas.getContext('2d');
+  resizePFD();
+  window.addEventListener('resize', resizePFD);
+  drawPFD(null);
+}
+
+function resizePFD() {
+  const rect = pfdCanvas.parentElement.getBoundingClientRect();
+  pfdCanvas.width = rect.width;
+  pfdCanvas.height = rect.height;
+}
+
+// PFD - главная функция отрисовки (адаптивная)
+function drawPFD(data) {
+  const ctx = pfdCtx;
+  const w = pfdCanvas.width;
+  const h = pfdCanvas.height;
+  
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+  
+  if (!data) {
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '18px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.fillText('Нет данных', w / 2, h / 2);
+    return;
+  }
+  
+  const cx = w / 2;
+  const cy = h / 2;
+  
+  // Базовый масштаб относительно 600px
+  const scale = Math.min(w, h) / 600;
+  
+  // Top bar
+
+  
+  // DME и Wind - адаптивные позиции
+  const margin = Math.max(10, w * 0.02);
+  const topOffset = Math.max(40, h * 0.08);
+  drawDME(ctx, margin, topOffset, data, scale);
+  drawWindCompact(ctx, w - margin - 100 * scale, topOffset, data, scale);
+  
+  // Horizon - адаптивный размер
+  const horizonSize = Math.min(w * 0.35, h * 0.4, 250 * scale);
+  drawAttitudeFull(ctx, cx, cy, horizonSize, data, scale);
+  
+  // Speed tape - слева
+  const tapeWidth = Math.max(50, w * 0.11);
+  const tapeHeight = Math.min(h * 0.5, 300 * scale);
+  drawSpeedTapeFull(ctx, tapeWidth * 0.7, cy, tapeWidth * 0.75, tapeHeight, data, scale);
+  
+  // Altitude tape - справа
+  const altTapeWidth = Math.max(60, w * 0.13);
+  drawAltitudeTapeFull(ctx, w - altTapeWidth * 1.2, cy, altTapeWidth * 0.7, tapeHeight, data, scale);
+  
+  // Vertical speed - крайняя правая
+  const vsWidth = Math.max(25, w * 0.05);
+  const vsHeight = Math.min(h * 0.4, 240 * scale);
+  drawVerticalSpeedFull(ctx, w - vsWidth * 0.7, cy, vsWidth, vsHeight, data, scale);
+  
+  // Heading tape - внизу
+  const headingY = h - Math.max(70, h * 0.14);
+  const headingWidth = Math.min(w * 0.6, 420 * scale);
+  const headingHeight = Math.max(50, h * 0.11);
+  drawHeadingFull(ctx, cx, headingY, headingWidth, headingHeight, data, scale);
+  
+  // Radio altitude - над heading
+  const raY = headingY - Math.max(25, h * 0.06);
+  drawRadioHeight(ctx, cx, raY, data, scale);
+  
+  // Status - левый нижний угол
+  drawStatus(ctx, margin, h - margin - 10, data, scale);
+}
+
+function drawTopBar(ctx, w, data, scale = 1) {
+  ctx.fillStyle = '#4a5568';
+  ctx.fillRect(0, 0, w, 30 * scale);
+  ctx.font = `bold ${Math.round(12 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#10b981';
+  ctx.fillText('SINGLE CH', w / 2, 20 * scale);
+}
+
+function drawDME(ctx, x, y, data, scale = 1) {
+  const distNM = (data.dmeFileNM ?? data.distanceToThresholdCalcNM ?? 0);
+  ctx.font = `bold ${Math.round(13 * scale)}px monospace`;
+  ctx.fillStyle = '#e0e0e0';
+  ctx.textAlign = 'left';
+  ctx.fillText('DME', x, y);
+  ctx.font = `bold ${Math.round(16 * scale)}px monospace`;
+  ctx.fillStyle = '#10b981';
+  ctx.fillText(distNM.toFixed(1), x, y + 18 * scale);
+}
+
+function drawWindCompact(ctx, x, y, data, scale = 1) {
+  const windDir = data.windDirection || 0;
+  const windSpd = Math.round(data.windSpeed || 0);
+  const heading = data.heading || 0;
+  
+  if (windSpd < 1) return;
+  
+  let relativeDir = windDir - heading;
+  while (relativeDir > 180) relativeDir -= 360;
+  while (relativeDir < -180) relativeDir += 360;
+  
+  const arrowAngle = relativeDir;
+  const arrowSize = 11 * scale;
+  
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((arrowAngle * Math.PI) / 180);
+  ctx.strokeStyle = '#0ea5e9';
+  ctx.fillStyle = '#0ea5e9';
+  ctx.lineWidth = 2 * scale;
+  ctx.beginPath();
+  ctx.moveTo(0, -arrowSize);
+  ctx.lineTo(0, arrowSize);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, arrowSize);
+  ctx.lineTo(-4 * scale, arrowSize - 5 * scale);
+  ctx.lineTo(4 * scale, arrowSize - 5 * scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  
+  ctx.fillStyle = '#0ea5e9';
+  ctx.font = `bold ${Math.round(12 * scale)}px monospace`;
+  ctx.textAlign = 'left';
+  const absDir = Math.round(windDir % 360);
+  ctx.fillText(`${absDir.toString().padStart(3, '0')}/${windSpd}KT`, x + 16 * scale, y + 5 * scale);
+}
+
+function drawAttitudeFull(ctx, cx, cy, size, data, scale = 1) {
+  const pitch = -data.pitch;
+  const roll = data.roll;
+  
+  ctx.save();
+  const r = size / 2;
+  ctx.beginPath();
+  ctx.rect(cx - r, cy - r, size, size);
+  ctx.clip();
+  
+  ctx.translate(cx, cy);
+  ctx.rotate((-roll * Math.PI) / 180);
+  
+  const pitchScale = 10 * scale;
+  const offset = pitch * pitchScale;
+  
+  // Sky
+  ctx.fillStyle = '#3b82f6';
+  ctx.fillRect(-size, -size - offset, size * 2, size);
+  
+  // Ground
+  ctx.fillStyle = '#92400e';
+  ctx.fillRect(-size, -offset, size * 2, size);
+  
+  // Horizon line
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 4 * scale;
+  ctx.beginPath();
+  ctx.moveTo(-size, -offset);
+  ctx.lineTo(size, -offset);
+  ctx.stroke();
+  
+  // Pitch lines
+  ctx.font = `bold ${Math.round(14 * scale)}px monospace`;
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 2.5 * scale;
+  
+  // Major lines (10°)
+  for (let a = -30; a <= 30; a += 10) {
+    if (a === 0) continue;
+    const y = -offset - (a * pitchScale);
+    const lineW = 65 * scale;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(-lineW, y);
+    ctx.lineTo(lineW, y);
+    ctx.stroke();
+    
+    const label = Math.abs(a).toString();
+    ctx.fillText(label, -lineW - 22 * scale, y + 5 * scale);
+    ctx.fillText(label, lineW + 22 * scale, y + 5 * scale);
+  }
+  
+  // Medium lines (5°)
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2 * scale;
+  for (let a = -30; a <= 30; a += 5) {
+    if (a === 0 || a % 10 === 0) continue;
+    const y = -offset - (a * pitchScale);
+    const lineW = 42 * scale;
+    ctx.beginPath();
+    ctx.moveTo(-lineW, y);
+    ctx.lineTo(lineW, y);
+    ctx.stroke();
+  }
+  
+  // Short lines (2.5°)
+  ctx.strokeStyle = '#aaaaaa';
+  ctx.lineWidth = 1.5 * scale;
+  for (let a = -30; a <= 30; a += 2.5) {
+    if (a === 0 || a % 5 === 0) continue;
+    const y = -offset - (a * pitchScale);
+    const lineW = 25 * scale;
+    ctx.beginPath();
+    ctx.moveTo(-lineW, y);
+    ctx.lineTo(lineW, y);
+    ctx.stroke();
+  }
+  
+  ctx.restore();
+  
+  // Aircraft reference symbol
+  ctx.strokeStyle = '#fbbf24';
+  ctx.fillStyle = '#fbbf24';
+  ctx.lineWidth = 4 * scale;
+  ctx.beginPath();
+  ctx.moveTo(cx - 65 * scale, cy);
+  ctx.lineTo(cx - 23 * scale, cy);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + 23 * scale, cy);
+  ctx.lineTo(cx + 65 * scale, cy);
+  ctx.stroke();
+  
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 5 * scale);
+  ctx.lineTo(cx - 8 * scale, cy + 6 * scale);
+  ctx.lineTo(cx + 8 * scale, cy + 6 * scale);
+  ctx.closePath();
+  ctx.fill();
+  
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3 * scale, 0, Math.PI * 2);
+  ctx.fillStyle = '#000';
+  ctx.fill();
+  
+  // Roll indicator
+  drawRollIndicatorFull(ctx, cx, cy - r - 12 * scale, r * 0.92, roll, scale);
+  
+  // GS and LOC indicators
+  drawGSIndicator(ctx, cx + r + 28 * scale, cy, size * 0.4, data.gsDeviation, scale);
+  drawLOCIndicator(ctx, cx, cy + r + 28 * scale, size * 0.4, data.locDeviation, scale);
+}
+
+function drawRollIndicatorFull(ctx, cx, cy, radius, roll, scale = 1) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 2 * scale;
+  ctx.font = `bold ${Math.round(11 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  
+  const marks = [
+    { angle: -60, len: 13 * scale, label: '60' },
+    { angle: -45, len: 13 * scale, label: '45' },
+    { angle: -30, len: 13 * scale, label: '30' },
+    { angle: -20, len: 8 * scale, label: null },
+    { angle: -10, len: 8 * scale, label: '10' },
+    { angle: 0, len: 13 * scale, label: '0' },
+    { angle: 10, len: 8 * scale, label: '10' },
+    { angle: 20, len: 8 * scale, label: null },
+    { angle: 30, len: 13 * scale, label: '30' },
+    { angle: 45, len: 13 * scale, label: '45' },
+    { angle: 60, len: 13 * scale, label: '60' }
+  ];
+  
+  marks.forEach(m => {
+    const rad = (m.angle * Math.PI) / 180;
+    const x1 = Math.sin(rad) * radius;
+    const y1 = -Math.cos(rad) * radius;
+    const x2 = Math.sin(rad) * (radius + m.len);
+    const y2 = -Math.cos(rad) * (radius + m.len);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    
+    if (m.label) {
+      const labelRadius = radius + m.len + 11 * scale;
+      const lx = Math.sin(rad) * labelRadius;
+      const ly = -Math.cos(rad) * labelRadius;
+      ctx.fillText(m.label, lx, ly + 4 * scale);
+    }
+  });
+  
+  // Roll pointer
+  ctx.rotate((roll * Math.PI) / 180);
+  ctx.fillStyle = '#fbbf24';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.beginPath();
+  ctx.moveTo(0, -radius);
+  ctx.lineTo(-8 * scale, -radius - 13 * scale);
+  ctx.lineTo(8 * scale, -radius - 13 * scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  
+
+  // Roll value text
+  ctx.fillStyle = '#fbbf24';
+  ctx.strokeStyle = '#000';
+  ctx.font = `bold ${Math.round(13 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 2.5 * scale;
+  ctx.strokeText(roll.toFixed(2) + '°', cx, cy - radius + 18 * scale);
+  ctx.fillText(roll.toFixed(2) + '°', cx, cy - radius + 18 * scale);
+}
+
+function drawGSIndicator(ctx, x, cy, height, gsDeviation, scale = 1) {
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.beginPath();
+  ctx.moveTo(x, cy - height / 2);
+  ctx.lineTo(x, cy + height / 2);
+  ctx.stroke();
+  
+  ctx.fillStyle = '#94a3b8';
+  for (let i = -2; i <= 2; i++) {
+    const dotY = cy + (i * height) / 5;
+    ctx.beginPath();
+    ctx.arc(x, dotY, 2.5 * scale, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  if (gsDeviation !== null && gsDeviation !== undefined) {
+    const clamped = Math.max(-2, Math.min(2, gsDeviation));
+    const gy = cy + (clamped * height) / 5;
+    ctx.fillStyle = '#e879f9';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(x - 8 * scale, gy);
+    ctx.lineTo(x, gy - 6 * scale);
+    ctx.lineTo(x + 8 * scale, gy);
+    ctx.lineTo(x, gy + 6 * scale);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawLOCIndicator(ctx, cx, y, width, locDeviation, scale = 1) {
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.beginPath();
+  ctx.moveTo(cx - width / 2, y);
+  ctx.lineTo(cx + width / 2, y);
+  ctx.stroke();
+  
+  ctx.fillStyle = '#94a3b8';
+  for (let i = -2; i <= 2; i++) {
+    const dotX = cx + (i * width) / 5;
+    ctx.beginPath();
+    ctx.arc(dotX, y, 2.5 * scale, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  if (locDeviation !== null && locDeviation !== undefined) {
+    const clamped = Math.max(-2, Math.min(2, locDeviation));
+    const lx = cx + (clamped * width) / 5;
+    ctx.fillStyle = '#e879f9';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(lx, y - 8 * scale);
+    ctx.lineTo(lx + 6 * scale, y);
+    ctx.lineTo(lx, y + 8 * scale);
+    ctx.lineTo(lx - 6 * scale, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawSpeedTapeFull(ctx, x, y, w, h, data, scale = 1) {
+  const speed = data.airspeed;
+  
+  ctx.fillStyle = 'rgba(20,25,35,0.85)';
+  ctx.fillRect(x - w / 2, y - h / 2, w, h);
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+  
+  // Speed tape
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x - w / 2, y - h / 2, w, h);
+  ctx.clip();
+  
+  ctx.font = `bold ${Math.round(13 * scale)}px monospace`;
+  ctx.fillStyle = '#e5e7eb';
+  ctx.textAlign = 'right';
+  const step = 20;
+  const pixelsPerKnot = 3.5 * scale;
+  
+  for (let s = Math.floor((speed - step) / step) * step - 100; s <= speed + 100; s += step) {
+    if (s < 40) continue;
+    const sy = y - (s - speed) * pixelsPerKnot;
+    if (sy < y - h / 2 || sy > y + h / 2) continue;
+    
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2 - 16 * scale, sy);
+    ctx.lineTo(x + w / 2, sy);
+    ctx.stroke();
+    ctx.fillText(s.toString(), x + w / 2 - 20 * scale, sy + 4 * scale);
+  }
+  ctx.restore();
+  
+  // Current speed box - РИСУЕТСЯ ПОВЕРХ ЛЕНТЫ
+  const boxHeight = 36 * scale;
+  const boxPadding = 3 * scale;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  ctx.strokeStyle = '#10b981';
+  ctx.lineWidth = 2 * scale;
+  ctx.strokeRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  
+  ctx.fillStyle = '#10b981';
+  ctx.font = `bold ${Math.round(18 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(Math.round(speed), x, y);
+  ctx.textBaseline = 'alphabetic';
+  
+  // Ground speed
+  const groundSpeed = data.groundSpeed || 0;
+  ctx.fillStyle = '#10b981';
+  ctx.strokeStyle = '#000';
+  ctx.font = `bold ${Math.round(16 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 2 * scale;
+  const gsText = Math.round(groundSpeed).toString();
+  ctx.strokeText(gsText, x, y + h / 2 + 15 * scale);
+  ctx.fillText(gsText, x, y + h / 2 + 15 * scale);
+  ctx.font = `${Math.round(10 * scale)}px monospace`;
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('GS', x, y + h / 2 + 26 * scale);
+}
+
+function drawAltitudeTapeFull(ctx, x, y, w, h, data, scale = 1) {
+  const alt = data.altitude;
+  const selectedAlt = (data.selectedAlt !== undefined && data.selectedAlt !== null) ? data.selectedAlt : 0;
+  
+  ctx.fillStyle = 'rgba(20,25,35,0.85)';
+  ctx.fillRect(x - w / 2, y - h / 2, w, h);
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+  
+  // Selected altitude
+  ctx.fillStyle = '#e879f9';
+  ctx.font = `bold ${Math.round(15 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(selectedAlt.toString(), x, y - h / 2 - 8 * scale);
+  
+  // Altitude tape
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x - w / 2, y - h / 2, w, h);
+  ctx.clip();
+  
+  ctx.font = `bold ${Math.round(13 * scale)}px monospace`;
+  ctx.fillStyle = '#e5e7eb';
+  ctx.textAlign = 'left';
+  const step = 100;
+  const pixelsPerFoot = 1.1 * scale;
+  
+  for (let a = Math.floor((alt - step) / step) * step - 1000; a <= alt + 1000; a += step) {
+    if (a < 0) continue;
+    const ay = y - (a - alt) * pixelsPerFoot;
+    if (ay < y - h / 2 || ay > y + h / 2) continue;
+    
+    if (a % 200 === 0) {
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1.5 * scale;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, ay);
+      ctx.lineTo(x - w / 2 + 16 * scale, ay);
+      ctx.stroke();
+      ctx.fillText(a.toString(), x - w / 2 + 19 * scale, ay + 4 * scale);
+    } else {
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 1 * scale;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, ay);
+      ctx.lineTo(x - w / 2 + 10 * scale, ay);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+  
+  // Current altitude box - РИСУЕТСЯ ПОВЕРХ ЛЕНТЫ
+  const boxHeight = 36 * scale;
+  const boxPadding = 3 * scale;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  ctx.strokeStyle = '#10b981';
+  ctx.lineWidth = 2 * scale;
+  ctx.strokeRect(x - w / 2 - boxPadding, y - boxHeight / 2, w + boxPadding * 2, boxHeight);
+  
+  ctx.fillStyle = '#10b981';
+  ctx.font = `bold ${Math.round(17 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(Math.round(alt), x, y);
+  ctx.textBaseline = 'alphabetic';
+}
+
+function drawVerticalSpeedFull(ctx, x, y, w, h, data, scale = 1) {
+  const vs = data.verticalSpeed;
+  
+  ctx.fillStyle = 'rgba(20,25,35,0.85)';
+  ctx.fillRect(x - w, y - h / 2, w, h);
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.strokeRect(x - w, y - h / 2, w, h);
+  
+  const maxVS = 2000;
+  const vsScale = h / (maxVS * 2);
+  const clamped = Math.max(-maxVS, Math.min(maxVS, vs));
+  const posY = y - clamped * vsScale;
+  
+  ctx.fillStyle = '#10b981';
+  ctx.beginPath();
+  ctx.moveTo(x - w + 3 * scale, posY);
+  ctx.lineTo(x - 3 * scale, posY);
+  ctx.lineTo(x - w / 2, posY - 6 * scale);
+  ctx.closePath();
+  ctx.fill();
+  
+  ctx.font = `${Math.round(9 * scale)}px monospace`;
+  ctx.fillStyle = '#94a3b8';
+  ctx.textAlign = 'center';
+  
+  [-2, -1, 0, 1, 2].forEach(val => {
+    const my = y - (val * 1000) * vsScale;
+    if (my >= y - h / 2 && my <= y + h / 2) {
+      ctx.fillText(val, x - w / 2, my + 3 * scale);
+    }
+  });
+  
+  // VS value
+  ctx.fillStyle = '#10b981';
+  ctx.strokeStyle = '#000';
+  ctx.font = `bold ${Math.round(11 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 2 * scale;
+  const vsText = Math.round(vs).toString();
+  ctx.strokeText(vsText, x - w / 2, y + h / 2 + 14 * scale);
+  ctx.fillText(vsText, x - w / 2, y + h / 2 + 14 * scale);
+  ctx.font = `${Math.round(8 * scale)}px monospace`;
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('FPM', x - w / 2, y + h / 2 + 24 * scale);
+}
+
+function drawHeadingFull(ctx, cx, y, w, h, data, scale = 1) {
+  const hdg = data.heading;
+  
+  ctx.fillStyle = 'rgba(20,25,35,0.85)';
+  ctx.fillRect(cx - w / 2, y, w, h);
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.strokeRect(cx - w / 2, y, w, h);
+  
+  // Selected heading
+  ctx.fillStyle = '#e879f9';
+  ctx.font = `bold ${Math.round(15 * scale)}px monospace`;
+  ctx.textAlign = 'left';
+  ctx.fillText(selectedHeading.toString().padStart(3, '0'), cx - w / 2 + 8 * scale, y + h - 8 * scale);
+  
+  // Current heading box
+  const boxW = 75 * scale;
+  const boxH = 28 * scale; // Увеличена высота
+  ctx.fillStyle = '#000';
+  ctx.fillRect(cx - boxW / 2, y + 2 * scale, boxW, boxH);
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 2.5 * scale;
+  ctx.strokeRect(cx - boxW / 2, y + 2 * scale, boxW, boxH);
+  
+  ctx.fillStyle = '#fbbf24';
+  ctx.font = `bold ${Math.round(20 * scale)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle'; // КЛЮЧЕВОЕ ИЗМЕНЕНИЕ - центрируем по вертикали
+  ctx.fillText(Math.round(hdg).toString().padStart(3, '0'), cx, y + 3 * scale + boxH / 2);
+  ctx.textBaseline = 'alphabetic'; // Возвращаем обратно
+  
+  // Heading tape
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(cx - w / 2, y + 20 * scale, w, h - 20 * scale);
+  ctx.clip();
+  
+  ctx.font = `bold ${Math.round(13 * scale)}px monospace`;
+  const pxPerDeg = 4.5 * scale;
+  
+  for (let a = 0; a < 360; a += 5) {
+    let diff = hdg - a;
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+    
+    const hx = cx - diff * pxPerDeg;
+    if (hx < cx - w / 2 || hx > cx + w / 2) continue;
+    
+    if (a % 30 === 0) {
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1.5 * scale;
+      ctx.beginPath();
+      ctx.moveTo(hx, y + h - 18 * scale);
+      ctx.lineTo(hx, y + h);
+      ctx.stroke();
+      
+      const labels = { 0: 'N', 90: 'E', 180: 'S', 270: 'W' };
+      ctx.fillStyle = '#e5e7eb';
+      ctx.textAlign = 'center';
+      ctx.fillText((labels[a] || (a / 10).toString()), hx, y + h - 21 * scale);
+    } else if (a % 10 === 0) {
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1.2 * scale;
+      ctx.beginPath();
+      ctx.moveTo(hx, y + h - 11 * scale);
+      ctx.lineTo(hx, y + h);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 0.8 * scale;
+      ctx.beginPath();
+      ctx.moveTo(hx, y + h - 8 * scale);
+      ctx.lineTo(hx, y + h);
+      ctx.stroke();
+    }
+  }
+  
+  // Selected heading marker
+  let diffSel = hdg - selectedHeading;
+  if (diffSel > 180) diffSel -= 360;
+  if (diffSel < -180) diffSel += 360;
+  const selX = cx - diffSel * pxPerDeg;
+  
+  if (selX >= cx - w / 2 && selX <= cx + w / 2) {
+    ctx.fillStyle = '#e879f9';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    ctx.moveTo(selX, y + 56 * scale);
+    ctx.lineTo(selX - 8 * scale, y + 44 * scale);
+    ctx.lineTo(selX + 8 * scale, y + 44 * scale);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  
+  ctx.restore();
+  
+  // Current heading pointer
+  ctx.fillStyle = '#fbbf24';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5 * scale;
+  ctx.beginPath();
+  ctx.moveTo(cx, y + 56 * scale);
+  ctx.lineTo(cx - 8 * scale, y + 44 * scale);
+  ctx.lineTo(cx + 8 * scale, y + 44 * scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+
+function drawRadioHeight(ctx, x, y, data, scale = 1) {
+  const radioAlt = Math.round(data.radioAltitude || 0);
+  ctx.font = `bold ${Math.round(24 * scale)}px monospace`;
+  ctx.fillStyle = '#fbbf24';
+  ctx.textAlign = 'center';
+  ctx.fillText(`RA ${radioAlt}`, x, y);
+}
+
+function drawStatus(ctx, x, y, d, scale = 1) {
+  ctx.fillStyle = '#e5e7eb';
+  ctx.font = `bold ${Math.round(11 * scale)}px monospace`;
+  ctx.textAlign = 'left';
+  ctx.fillText(d.onGround ? 'GROUND' : 'AIRBORNE', x, y);
+}
+
+// ================================================================
+// ЗАГРУЗКА И ДАННЫЕ
+// ================================================================
+function loadFile() {
+  document.getElementById("file-input").click();
+}
+document.getElementById("file-input").addEventListener("change", handleFile);
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  document.getElementById('loading').style.display = 'flex';
+  const reader = new FileReader();
+
+  reader.onload = (ev) => {
+    try {
+      const data = new Uint8Array(ev.target.result);
+      const workbook = XLSX.read(data, {type: 'array'});
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, {defval: null});
+
+      if (jsonData.length === 0) {
+        throw new Error("Файл пуст или не содержит данных.");
+      }
+
+      const columns = Object.keys(jsonData[0]);
+      console.log(`Найдено столбцов: ${columns.length}`);
+
+      // 1. Трансформация: Массив объектов -> Объект массивов
+      let processedData = {};
+      columns.forEach(col => {
+        processedData[col] = jsonData.map(row => row[col]);
+      });
+
+      // 2. Определение частоты
+      let timeKey = columns.find(c => ['time', 'Time', 'TIME', 'Время'].includes(c));
+      if (!timeKey) timeKey = columns[0];
+      
+      const timeArray = processedData[timeKey];
+      if (!timeArray || timeArray.length === 0) throw new Error("Нет данных времени");
+
+      const firstTime = timeArray[0];
+      let count = 0;
+      for (let i = 0; i < timeArray.length; i++) {
+        if (timeArray[i] === firstTime) count++;
+        else break;
+      }
+      const origHz = count || 1;
+      console.log(`Определена исходная частота: ${origHz} Гц`);
+
+      // 3. ФИЛЬТРАЦИЯ ВЫСОТЫ
+      const hcorKey = columns.find(c => c.startsWith('Hcor1') || c.startsWith('Hcor'));
+      const vsKey = columns.find(c => ['Vy', 'VS', 'VerticalSpeed'].includes(c));
+      const timeData = processedData[timeKey]; // Массив времени
+
+      if (hcorKey && processedData[hcorKey]) {
+          console.log(`Обработка высоты ${hcorKey}...`);
+          
+          // ШАГ 1: Физическая фильтрация (удаление выбросов против физики)
+          if (vsKey && processedData[vsKey]) {
+              console.log(`Применяю Smart VS Filter...`);
+              processedData[hcorKey] = filterAltitudeByVS(
+                  processedData[hcorKey], 
+                  processedData[vsKey], 
+                  timeData
+              );
+          }
+          
+          // ШАГ 2: Фильтрация ступенек (оставляем только моменты изменения)
+          processedData[hcorKey] = filterRepeats(processedData[hcorKey]);
+      }
+
+      // 4. Заполнение пропусков
+      columns.forEach(col => {
+          if (col !== timeKey) {
+              processedData[col] = fillGaps(processedData[col]);
+          }
+      });
+
+      // 5. Ресемплинг до 32 Гц
+      const targetHz = 32;
+      let finalData = {}; 
+
+      if (origHz === targetHz) {
+          console.log(`Частота уже ${targetHz} Гц, копируем данные.`);
+          columns.forEach(col => {
+              if (col !== timeKey) {
+                  finalData[`i.${col}`] = processedData[col];
+              }
+          });
+      } else {
+          console.log(`Ресемплинг с ${origHz} Гц до ${targetHz} Гц...`);
+          columns.forEach(col => {
+              if (col !== timeKey) {
+                  const originalArray = processedData[col];
+                  const sampleVal = originalArray.find(v => v !== null && v !== undefined);
+                  const isNumeric = (typeof sampleVal === 'number');
+                  finalData[`i.${col}`] = resampleArray(originalArray, origHz, targetHz, isNumeric);
+              }
+          });
+      }
+
+      // 6. СБОРКА flightData
+      const firstKey = Object.keys(finalData)[0];
+      const length = finalData[firstKey].length;
+      
+      flightData = [];
+      
+      const getVal = (colName, idx) => {
+          let key = `i.${colName}`;
+          if (finalData[key]) return finalData[key][idx];
+          const prefixKey = Object.keys(finalData).find(k => k.startsWith(`i.${colName}`));
+          if (prefixKey) return finalData[prefixKey][idx];
+          const suffixKey = Object.keys(finalData).find(k => k.endsWith(`.${colName}`));
+          if (suffixKey) return finalData[suffixKey][idx];
+          return 0;
+      };
+      
+      const getValNullable = (colName, idx) => {
+           let key = `i.${colName}`;
+           if (finalData[key]) return finalData[key][idx];
+           const prefixKey = Object.keys(finalData).find(k => k.startsWith(`i.${colName}`));
+           if (prefixKey) return finalData[prefixKey][idx];
+           const suffixKey = Object.keys(finalData).find(k => k.endsWith(`.${colName}`));
+           if (suffixKey) return finalData[suffixKey][idx];
+           return null;
+      };
+
+      for (let i = 0; i < length; i++) {
+        const d = {};
+        d.timestamp = i * (1000 / targetHz); 
+
+        d.pitch = getVal('PITCH', i);
+        if (d.pitch === 0) d.pitch = getVal('Pitch', i);
+
+        d.roll = getVal('ROLL', i);
+        if (d.roll === 0) d.roll = getVal('Roll', i);
+
+        d.heading = getVal('HDN', i);
+        if (d.heading === 0) d.heading = getVal('Heading', i);
+
+        d.airspeed = getVal('Vcom', i);
+        if (d.airspeed === 0) d.airspeed = getVal('IAS', i);
+
+        d.verticalSpeed = getVal('Vy', i);
+        if (d.verticalSpeed === 0) d.verticalSpeed = getVal('VS', i);
+
+        d.radioAltitude = getVal('Hg', i);
+        if (d.radioAltitude === 0) d.radioAltitude = getVal('RA', i);
+
+        d.altitude = getVal('Hcor1', i);
+        if (d.altitude === 0) d.altitude = getVal('Hcor', i);
+        
+        d.windSpeed = getVal('Vw', i);
+        d.windDirection = getVal('Wdir', i);
+        if (d.windDirection === 0) d.windDirection = getVal('Wdirr', i);
+
+        d.locDeviation = getValNullable('LOCdev', i);
+        d.gsDeviation = getValNullable('GSdev', i);
+        
+        const hsel = getValNullable('Hsel', i);
+
+        d.selectedAlt = (hsel !== null) ? Math.round(hsel / 100) * 100 : 0;
+
+        d.distanceToThresholdNM = getValNullable('DMEl', i);
+        if (d.distanceToThresholdNM === null) d.distanceToThresholdNM = getValNullable('DME', i);
+        
+        d.dmeFileNM = getValNullable('DMEl', i);
+        if (d.dmeFileNM === null) d.dmeFileNM = getValNullable('DME', i); // fallback
+        
+        
+
+        d.groundSpeed = getVal('Vgr', i);
+        
+        if (d.groundSpeed === 0 && d.windSpeed > 0 && d.airspeed > 0) {
+            const hdgRad = (d.heading * Math.PI) / 180;
+            const tasX = d.airspeed * Math.sin(hdgRad);
+            const tasY = d.airspeed * Math.cos(hdgRad);
+            const windRad = ((d.windDirection + 180) * Math.PI) / 180;
+            const windX = d.windSpeed * Math.sin(windRad);
+            const windY = d.windSpeed * Math.cos(windRad);
+            d.groundSpeed = Math.sqrt(Math.pow(tasX + windX, 2) + Math.pow(tasY + windY, 2));
+        }
+        
+        // Умное определение OnGround (строки/числа)
+        let agVal = getVal('Air/Gr', i);
+        if (!agVal) agVal = getVal('AirGr', i); 
+        
+        if (agVal && typeof agVal === 'string') {
+            d.onGround = agVal.toLowerCase().includes('ground');
+        } else {
+             d.onGround = (agVal > 0.5);
+        }
+
+        flightData.push(d);
+      }
+      
+// --- ИНТЕГРАЦИЯ ВЫСОТЫ (SAFE VERSION) ---
+if (flightData && flightData.length > 0) {
+          let tdIndex = -1;
+          
+          // 1. Ищем точку касания
+          // Пробуем найти переход onGround: false -> true
+          for (let i = 0; i < flightData.length - 1; i++) {
+              if (flightData[i] && flightData[i+1]) { // Проверка на существование
+                  if (!flightData[i].onGround && flightData[i+1].onGround) {
+                      tdIndex = i + 1;
+                      break;
+                  }
+              }
+          }
+          
+          // Если не нашли, ищем минимум RA
+          if (tdIndex === -1) {
+              let minRA = 10000;
+              for (let i = 0; i < flightData.length; i++) {
+                  if (!flightData[i]) continue;
+                  let ra = flightData[i].radioAltitude;
+                  if (ra !== null && ra !== undefined && ra < minRA) {
+                      minRA = ra;
+                      tdIndex = i;
+                  }
+              }
+          }
+          
+          // Фолбэк на последний кадр
+          if (tdIndex === -1) tdIndex = flightData.length - 1;
+          
+          // console.log("Touchdown Index:", tdIndex);
+
+          // 2. Интеграция
+          // Убедимся, что точка касания существует
+          if (flightData[tdIndex]) {
+              flightData[tdIndex].integratedHeightFt = 0;
+              
+              const dt = 1.0 / 32.0; // Жестко задаем 32 Гц (так как мы ресемплили к 32)
+              
+ // НАЗАД
+ for (let i = tdIndex - 1; i >= 0; i--) {
+                  const current = flightData[i];
+                  const next = flightData[i+1];
+                  
+                  if (current && next) {
+                      const vsFPS = (current.verticalSpeed || 0) / 60.0;
+                      // Защита от NaN
+                      let hNext = next.integratedHeightFt;
+                      if (typeof hNext !== 'number') hNext = 0;
+                      
+                      current.integratedHeightFt = hNext - (vsFPS * dt);
+                  }
+              }
+              
+              // ВПЕРЕД
+              for (let i = tdIndex + 1; i < flightData.length; i++) {
+                  const current = flightData[i];
+                  const prev = flightData[i-1];
+                  
+                  if (current && prev) {
+                      const vsFPS = (prev.verticalSpeed || 0) / 60.0;
+                      let hPrev = prev.integratedHeightFt;
+                      if (typeof hPrev !== 'number') hPrev = 0;
+                      
+                      current.integratedHeightFt = hPrev + (vsFPS * dt);
+                      if (current.radioAltitude !== null && current.radioAltitude < -2) {
+                      current.integratedHeightFt = 0;
+                      }
+                      if (current.integratedHeightFt < 0) current.integratedHeightFt = 0;
+                  }
+              }
+          }
+      }
+      // ПОИСК И УСТАНОВКА КУРСА ПОЛОСЫ (HDNsel или Авто-расчет)
+      // 1. Пробуем найти явный параметр HDNsel
+      const hdnSelKey = Object.keys(finalData).find(k => k.includes('HDNsel') || k.includes('HDN.sel'));
+      let foundHdn = false;
+      
+      if (hdnSelKey) {
+          const val = finalData[hdnSelKey][0];
+           if (val && val !== 0) {
+              selectedHeading = Math.round(val);
+              foundHdn = true;
+           }
+      }
+
+      // 2. Если не нашли, вычисляем по траектории захода
+      if (!foundHdn && flightData.length > 0) {
+        console.log("Auto-detecting Runway Heading from final approach...");
+        let touchdownIdx = flightData.findIndex(d => d.radioAltitude !== null && d.radioAltitude <= -4);
+        if (touchdownIdx === -1) touchdownIdx = flightData.length - 1;
+        let minRA = 10000;
+        let touchdownIndex = -1;
+        const fps = 32;
+        const endWindow = Math.max(0, touchdownIdx - 5 * fps);
+        const startWindow = Math.max(0, touchdownIdx - 30 * fps);
+        
+        for (let i = 0; i < processedData.length; i++) {
+    const ra = processedData[i].radioAltitude;
+    if (ra !== null && ra < minRA) {
+        minRA = ra;
+        touchdownIndex = i;
+    }
+}
+
+// Если нашли точку касания
+let touchdownBaro = 0;
+if (touchdownIndex !== -1) {
+    // Берем баровысоту в точке касания (плюс поправка на высоту шасси, если RA ~ 0)
+    // Если в точке касания RA = 0, то TouchdownBaro = Baro[i]
+    // Если в точке касания RA = -2 (обжатие), корректируем.
+    // Для простоты возьмем просто Baro в точке минимальной RA.
+    touchdownBaro = processedData[touchdownIndex].altitude; // Барометрическая (в футах)
+}
+
+// Сохраняем эту константу в данных или глобально
+// Лучше записать в каждый кадр "высоту относительно торца" (RelativeHeight)
+for (let i = 0; i < processedData.length; i++) {
+    const d = processedData[i];
+    // Высота относительно касания (в футах)
+    d.relativeHeight = d.altitude - touchdownBaro; 
+    
+    // Но! Баровысота может "гулять". 
+    // Лучше скомбинировать:
+    // Если RA < 50 -> Использовать RA (для точности касания)
+    // Если RA > 200 -> Использовать Baro (для плавности полета)
+    // Между 50 и 200 -> Линейная интерполяция (Mix)
+    
+    let ra = d.radioAltitude;
+    if (ra === null) ra = d.relativeHeight; // Фолбэк
+    
+    // Смешивание (Weight)
+    // 0 = только Baro, 1 = только RA
+    let weight = 0;
+    
+    if (ra < 50) {
+        weight = 1; // Чистый RA у земли (точность)
+    } else if (ra > 200) {
+        weight = 0; // Чистая Baro-Relative наверху (плавность)
+    } else {
+        // Плавный переход от 50 (1) до 200 (0)
+        weight = 1 - (ra - 50) / (150); 
+    }
+    
+    // Финальная высота для 3D (в футах)
+    // d.relativeHeight может быть немного неточной, если давление менялось, но для короткой посадки пойдет.
+    // Важно: relativeHeight должна быть > 0.
+    
+    const finalH_ft = (ra * weight) + (d.relativeHeight * (1 - weight));
+    
+    d.final3DHeightMeters = finalH_ft * 0.3048;
+}
+
+
+        if (endWindow > startWindow) {
+            let sinSum = 0;
+            let cosSum = 0;
+            let count = 0;
+            
+            for (let i = startWindow; i < endWindow; i++) {
+                const d = flightData[i];
+                if (d.groundSpeed > 50) {
+                    let track = d.heading;
+                    if (d.windSpeed > 0 && d.airspeed > 0) {
+                       const hdgRad = (d.heading * Math.PI) / 180;
+                       const windRad = ((d.windDirection + 180) * Math.PI) / 180;
+                       const vAirX = d.airspeed * Math.sin(hdgRad);
+                       const vAirY = d.airspeed * Math.cos(hdgRad);
+                       const vWindX = d.windSpeed * Math.sin(windRad);
+                       const vWindY = d.windSpeed * Math.cos(windRad);
+                       track = (Math.atan2(vAirX + vWindX, vAirY + vWindY) * 180) / Math.PI;
+                       if (track < 0) track += 360;
+                    }
+                    
+                    const r = (track * Math.PI) / 180;
+                    sinSum += Math.sin(r);
+                    cosSum += Math.cos(r);
+                    count++;
+                }
+            }
+            
+            if (count > 0) {
+                const avgRad = Math.atan2(sinSum, cosSum);
+                let avgDeg = (avgRad * 180) / Math.PI;
+                if (avgDeg < 0) avgDeg += 360;
+                selectedHeading = parseFloat(avgDeg.toFixed(2)); 
+                console.log(`Detected RWY HDG: ${selectedHeading}° (based on ${count} samples)`);
+            }
+        }
+      }
+      
+      // Обновляем UI с найденным курсом
+      document.getElementById('input-hdg').value = selectedHeading;
+      createRunwayNumber(-40); 
+
+      calculateDistanceAndHeight(); // Первый проход (грубый)
+
+  // Попытка уточнить по LOC
+    if (refineRunwayHeadingUsingLOC()) {
+        console.log("Runway Heading refined by LOC. Recalculating path...");
+        calculateDistanceAndHeight(); // Второй проход (точный)
+    }
+      totalFrames = flightData.length;
+      currentFrame = 0;
+      enableControls();
+      updateAllViews();
+      console.log(`${totalFrames} кадров (${(totalFrames/FPS).toFixed(1)}с)`);
+
+    } catch (err) {
+      console.error(err);
+      alert('Ошибка чтения файла: ' + err.message);
+    } finally {
+      document.getElementById('loading').style.display = 'none';
+    }
+  };
+
+  reader.readAsArrayBuffer(file);
+}
+
+// <!-- function interpolateData(data) { -->
+//   <!-- if (data.length < 2) return data; -->
+//   <!-- const t0 = data[0].timestamp; -->
+//   <!-- const t1 = data[data.length - 1].timestamp; -->
+//   <!-- const total = t1 - t0; -->
+//   <!-- const frames = Math.ceil(total / FRAME_MS); -->
+//   <!-- const out = []; -->
+//   <!-- for (let i = 0; i < frames; i++) { -->
+//     <!-- const t = t0 + i * FRAME_MS; -->
+//     <!-- let j2 = data.findIndex(d => d.timestamp >= t); -->
+//     <!-- if (j2 === -1) { out.push({ ...data[data.length - 1], timestamp: t }); continue; } -->
+//     <!-- if (j2 === 0) { out.push({ ...data[0], timestamp: t }); continue; } -->
+//     <!-- const j1 = j2 - 1; -->
+//     <!-- const d1 = data[j1], d2 = data[j2]; -->
+//     <!-- const k = (t - d1.timestamp) / (d2.timestamp - d1.timestamp); -->
+  
+// <!-- out.push({ -->
+//   <!-- timestamp: t, -->
+//   <!-- pitch: lerp(d1.pitch, d2.pitch, k), -->
+//   <!-- roll: lerp(d1.roll, d2.roll, k), -->
+//   <!-- heading: lerpAngle(d1.heading, d2.heading, k), -->
+//   <!-- airspeed: lerp(d1.airspeed, d2.airspeed, k), -->
+//   <!-- groundSpeed: lerp(d1.groundSpeed, d2.groundSpeed, k), -->
+//   <!-- verticalSpeed: lerp(d1.verticalSpeed, d2.verticalSpeed, k), -->
+//   <!-- locDeviation: mixOpt(d1.locDeviation, d2.locDeviation, k), -->
+//   <!-- gsDeviation: mixOpt(d1.gsDeviation, d2.gsDeviation, k), -->
+//   <!-- windSpeed: lerp(d1.windSpeed, d2.windSpeed, k), -->
+//   <!-- windDirection: lerpAngle(d1.windDirection, d2.windDirection, k), -->
+//   <!-- onGround: d1.onGround || d2.onGround, -->
+//   <!-- radioAltitude: lerp(d1.radioAltitude, d2.radioAltitude, k), -->
+//   <!-- altitude: lerp(d1.altitude || 0, d2.altitude || 0, k), -->
+//   <!-- distanceFromTouchdown: lerp(d1.distanceFromTouchdown || 0, d2.distanceFromTouchdown || 0, k), -->
+//   <!-- // Интерполируем DME, если оба значения не null -->
+//   <!-- distanceToThresholdNM: (d1.distanceToThresholdNM !== null && d2.distanceToThresholdNM !== null) -->
+//     <!-- ? lerp(d1.distanceToThresholdNM, d2.distanceToThresholdNM, k) -->
+//     <!-- : (d1.distanceToThresholdNM !== null ? d1.distanceToThresholdNM : d2.distanceToThresholdNM) -->
+// <!-- }); -->
+
+//   <!-- } -->
+//   <!-- return out; -->
+// <!-- } -->
+
+
+    function calculateDistanceAndHeight() {
+	
+    let hasTouched = false;
+	for (let i = 0; i < flightData.length; i++) {
+	const d = flightData[i];
+	const ra = d.radioAltitude;
+
+  if (!hasTouched) {
+    // До первого касания
+    d.raGround = (ra !== null && ra <= -4);
+    if (d.raGround) hasTouched = true;
+  } else {
+    // После первого касания держим "на земле", пока RA снова не станет > 0
+    if (ra !== null && ra > 0) {
+      d.raGround = false; // отрыв / снова в воздухе
+    } else {
+      d.raGround = true;  // всё ещё на земле
+    }
+  }
+}
+		
+		if (flightData.length === 0) return;
+        
+        console.log("Начинаю расчет (Чистая физика + Синхронизация по RadioAlt)...");
+
+// 1. Поиск точки касания (строго по высоте <= 4 фута)
+let touchdownIndex = flightData.findIndex(d => d.radioAltitude !== null && d.radioAltitude <= 4);
+
+// Fallback
+if (touchdownIndex === -1) {
+  touchdownIndex = flightData.findIndex(d => d.onGround);
+}
+		
+		let everTouched = false;
+		let everLiftedAfterTouch = false;
+		let altitudeBias = 0;
+
+for (let i = 0; i < flightData.length; i++) {
+  const d = flightData[i];
+  const ra = d.radioAltitude;
+
+  if (ra !== null && ra <= -4) {
+    // Первое реальное касание
+    everTouched = true;
+  }
+
+  if (everTouched && ra !== null && ra > 0) {
+    // После касания RA снова > 0 — значит был отрыв
+    everLiftedAfterTouch = true;
+  }
+
+  if (!everTouched) {
+    // До первого касания — обычная логика
+    d.stickyOnGround = false;
+  } else if (everTouched && !everLiftedAfterTouch) {
+    // После первого касания и пока не было RA>0 — считаем, что всё время на земле
+    d.stickyOnGround = true;
+  } else {
+    // После того как был отрыв — дальше смотрим только на актуальный RA
+    d.stickyOnGround = (ra !== null && ra <= -4);
+  }
+}
+        // БАЗОВЫЙ ВАРИАНТ: если вообще не нашли касание (проход/уход на второй круг)
+        let zPosCorrection = 0; // Смещение по Z (в метрах)
+
+        if (touchdownIndex === -1) {
+          let minAlt = Infinity;
+          let minAltIndex = -1;
+
+          flightData.forEach((d, i) => {
+            const ra = (d.radioAltitude !== null) ? d.radioAltitude : 9999;
+            if (ra < minAlt) { 
+                minAlt = ra; 
+                touchdownIndex = i; // "Точка касания" - это просто точка минимума
+                minAltIndex = i;
+            }
+          });
+
+          // Коррекция высоты (как и раньше)
+          if (touchdownIndex !== -1) {
+              altitudeBias = flightData[touchdownIndex].altitude - (flightData[touchdownIndex].radioAltitude || 0);
+          
+              // === НОВАЯ ЛОГИКА СИНХРОНИЗАЦИИ ПО DMEl ===
+              // Смотрим DMEl в точке минимума
+              const dMin = flightData[minAltIndex];
+              // DMEl (или DME) в морских милях
+              const dmeVal = dMin.distanceToThresholdNM; 
+
+              if (dmeVal !== null && dmeVal !== undefined && dmeVal > 0) {
+                  console.log(`Посадки нет. Синхронизация по DME: ${dmeVal} NM`);
+                  // Если DME=2.5NM, значит мы за 2.5NM до торца. 
+                  // В системе координат: Торец = 0 (или -270 в сцене). Мы должны быть в - (2.5 * 1852).
+                  // Значит в точке минимума (touchdownIndex) zPos должен стать не 0, а -DME.
+                  zPosCorrection = (dmeVal * 1852); 
+              }
+          }
+          
+        } else {
+            // ... (Старый блок ELSE для случая с посадкой) ...
+             // НОВАЯ ЛОГИКА: ищем минимальную баро-высоту на пробеге и по ней делаем ноль
+              let minAltOnGround = Infinity;
+              for (let i = touchdownIndex; i < flightData.length; i++) {
+                const ra = flightData[i].radioAltitude;
+                if (ra === null) continue;
+                if (ra <= 0) { // считаем землей RA <= 0
+                  const alt = flightData[i].altitude;
+                  if (alt !== null && alt < minAltOnGround) {
+                    minAltOnGround = alt;
+                  }
+                }
+              }
+              if (minAltOnGround !== Infinity) {
+                altitudeBias = minAltOnGround;
+              } else {
+                altitudeBias = flightData[touchdownIndex].altitude;
+              }
+        }
+
+
+  
+
+
+
+        // Коррекция высоты
+        flightData.forEach(d => {
+            d.correctedAltitude = d.altitude - altitudeBias;
+            d.integratedHeightFt = d.correctedAltitude;
+        });
+
+        // 2. Расчет векторов
+flightData.forEach(d => {
+            // Базовый угол (куда смотрит нос)
+            let rawTrack = d.heading;
+            
+            // Рассчитываем "Идеальный аэродинамический дрейф" (как если бы мы летели)
+            let aerodynamiDrift = 0;
+            
+            // Считаем дрейф, только если есть скорость (защита от деления на 0)
+            if (d.airspeed > 10 && d.windSpeed && d.windDirection) {
+                 const hdgRad = (d.heading * Math.PI) / 180;
+                 const windRad = ((d.windDirection + 180) * Math.PI) / 180;
+                 
+                 const vAirX = d.airspeed * Math.sin(hdgRad);
+                 const vAirY = d.airspeed * Math.cos(hdgRad);
+                 const vWindX = d.windSpeed * Math.sin(windRad);
+                 const vWindY = d.windSpeed * Math.cos(windRad);
+                 
+                 // Вектор путевой скорости (Air + Wind)
+                 const vGroundX = vAirX + vWindX;
+                 const vGroundY = vAirY + vWindY;
+                 
+                 let trackWithWind = (Math.atan2(vGroundX, vGroundY) * 180) / Math.PI;
+                 if (trackWithWind < 0) trackWithWind += 360;
+                 
+                 // Разница между Треком и Курсом = Угол сноса
+                 let diff = trackWithWind - d.heading;
+                 if (diff > 180) diff -= 360;
+                 if (diff < -180) diff += 360;
+                 aerodynamiDrift = diff;
+            }
+
+            // === ГЛАВНАЯ ЛОГИКА ===
+            // Определяем силу воздействия ветра (Wind Effect Factor)
+            let windFactor = 0;
+
+            const isOnGroundReal = d.raGround;
+
+            if (!isOnGroundReal) {
+                // В ВОЗДУХЕ: Ветер действует на 100%
+                windFactor = 1.0;
+            } else {
+                // НА ЗЕМЛЕ: Ветер действует в зависимости от скорости
+                // > 130 узлов -> Factor 1.0 (еще летим над полосой/касание)
+                // < 100 узлов -> Factor 0.0 (едем как трамвай)
+                // Между 100 и 130 -> Плавное снижение
+                
+                const speed = d.airspeed; // Лучше использовать groundSpeed на пробеге, но airspeed тоже ок
+                
+                // Верхний порог (ветер 100%): выше 130 узлов
+                const upperSpeed = 130;
+                // Нижний порог (ветер 0%): ниже 50 узлов
+                const lowerSpeed = 80; 
+                
+                if (speed >= upperSpeed) {
+                    windFactor = 1.0;
+                } else if (speed <= lowerSpeed) {
+                    windFactor = 0.0;
+                } else {
+                    // Интерполяция между 50 и 130
+                    // Диапазон = 130 - 50 = 80
+                    windFactor = (speed - lowerSpeed) / (upperSpeed - lowerSpeed);
+                }
+
+            }
+            
+            // Итоговый угол сноса
+            const finalDrift = aerodynamiDrift * windFactor;
+            
+            // Итоговый Track
+            rawTrack = d.heading + finalDrift;
+            
+            // Нормализация 0-360
+            if (rawTrack >= 360) rawTrack -= 360;
+            if (rawTrack < 0) rawTrack += 360;
+
+            d.targetTrack = rawTrack;
+            // Для инерции считаем "землей" только полное сцепление (фактор < 0.5)
+            d.isCalculatedGround = (windFactor < 0.5); 
+        });
+
+        // 3. Сглаживание (Инерция 60 тонн)
+        // Инициализация первым вектором
+        let currentVecX = Math.sin(flightData[0].targetTrack * Math.PI / 180);
+        let currentVecY = Math.cos(flightData[0].targetTrack * Math.PI / 180);
+        
+        const inertiaFactor = 0.05; // Коэффициент плавности
+
+        for (let i = 0; i < flightData.length; i++) {
+            const d = flightData[i];
+            
+            // На земле инерция чуть меньше (сцепление лучше), в воздухе больше
+            const effectiveInertia = d.isCalculatedGround ? 0.2 : inertiaFactor;
+
+            const targetRad = d.targetTrack * Math.PI / 180;
+            const targetX = Math.sin(targetRad);
+            const targetY = Math.cos(targetRad);
+            
+            // Экспоненциальное сглаживание вектора
+            currentVecX += (targetX - currentVecX) * effectiveInertia;
+            currentVecY += (targetY - currentVecY) * effectiveInertia;
+            
+            // Нормализация
+            const len = Math.sqrt(currentVecX**2 + currentVecY**2);
+            currentVecX /= len;
+            currentVecY /= len;
+            
+            let smoothedTrack = (Math.atan2(currentVecX, currentVecY) * 180) / Math.PI;
+            if (smoothedTrack < 0) smoothedTrack += 360;
+            
+            d.smoothedTrack = smoothedTrack;
+        }
+
+        // 4. Интеграция позиции
+        flightData[touchdownIndex].xPos = 0; 
+        flightData[touchdownIndex].zPos = zPosCorrection; // Применяем коррекцию (0 или -DME)
+        flightData[touchdownIndex].distanceFromTouchdown = zPosCorrection * 3.28084;
+
+		const calculateStep = (dataPoint, dtSeconds) => {
+			const gsMps = (dataPoint.groundSpeed || 0) * 0.514444; 
+			let trackToUse = dataPoint.smoothedTrack; // smoothedTrack или targetTrack,
+
+			// Нормализация разницы трека относительно курса ВПП в диапазон -180..180
+			let trackDelta = trackToUse - selectedHeading;
+			if (trackDelta > 180) trackDelta -= 360;
+			if (trackDelta < -180) trackDelta += 360;
+
+			const trackRad = (trackDelta * Math.PI) / 180;
+
+			const distStep = gsMps * dtSeconds;
+			return {
+				dX: distStep * Math.sin(trackRad),
+				dZ: distStep * Math.cos(trackRad)
+			};
+		};
+        // НАЗАД (ваши знаки +)
+        for (let i = touchdownIndex - 1; i >= 0; i--) {
+            const curr = flightData[i];
+            const next = flightData[i+1];
+            const dt = (next.timestamp - curr.timestamp) / 1000;
+            const step = calculateStep(curr, dt);
+            
+            curr.xPos = next.xPos - step.dX; 
+            curr.zPos = next.zPos + step.dZ; 
+            curr.distanceFromTouchdown = curr.zPos * 3.28084;
+        }
+
+        // ВПЕРЕД (ваши знаки -)
+        for (let i = touchdownIndex + 1; i < flightData.length; i++) {
+            const curr = flightData[i];
+            const prev = flightData[i-1];
+            const dt = (curr.timestamp - prev.timestamp) / 1000;
+            const step = calculateStep(prev, dt);
+            
+            curr.xPos = prev.xPos + step.dX;
+            curr.zPos = prev.zPos - step.dZ;
+            curr.distanceFromTouchdown = curr.zPos * 3.28084;
+        }
+        
+        flightData.forEach(d => {
+            const distToThrMeters = d.zPos - 300; 
+            d.distanceToThresholdNM = distToThrMeters / 1852;
+        });
+        
+        pathMeta.totalDistanceNM = Math.max(...flightData.map(d => d.distanceToThresholdNM));
+        
+        rebuildTrail();
+        updateTrailDrawRange();
+
+
+    }
+
+    function refineRunwayHeadingUsingLOC() {
+    // 1. Ищем валидные данные LOC
+    // Нам нужны точки, где мы в воздухе, но не слишком далеко и не слишком близко
+    // И где LOCdev существует.
+    
+    // Фильтруем данные: высота > 500ft, удаление < 10nm, LOCdev почти 0
+    let bestIdx = -1;
+    let minLocDev = Infinity;
+
+    for (let i = 0; i < flightData.length; i++) {
+        const d = flightData[i];
+        if (d.radioAltitude && d.radioAltitude > 500 && d.distanceToThresholdNM < 8 && d.locDeviation !== null) {
+            if (Math.abs(d.locDeviation) < minLocDev) {
+                minLocDev = Math.abs(d.locDeviation);
+                bestIdx = i;
+            }
+        }
+    }
+
+    if (bestIdx !== -1 && minLocDev < 0.05) { // Если нашли достаточно точное пересечение оси (0.05 точки)
+        const d = flightData[bestIdx];
+        
+        // В текущей системе координат (построенной по старому Heading)
+        // самолёт находится в точке (d.xPos, d.zPos).
+        // А должен быть на оси (X=0), так как LOCdev=0.
+        
+        // Значит, вся траектория повернута неверно.
+        // Угол ошибки:
+        // atan2(x, z) дает угол, на который точка отклонена от оси Z.
+        // Нам нужно повернуть ось Z так, чтобы она прошла через эту точку.
+        
+        const errorAngleRad = Math.atan2(d.xPos, d.zPos);
+        const errorAngleDeg = errorAngleRad * 180 / Math.PI;
+
+        console.log(`LOC Auto-Correction: Found LOC capture at index ${bestIdx}.`);
+        console.log(`Current X: ${d.xPos.toFixed(1)}, Z: ${d.zPos.toFixed(1)}`);
+        console.log(`Correction Angle: ${errorAngleDeg.toFixed(2)} degrees`);
+
+        // Применяем коррекцию
+        // Если xPos > 0 (справа), значит ось полосы "левее", чем мы думали?
+        // Или мы "правее".
+        // Поворот координат на угол alpha:
+        // X' = X cos a - Z sin a
+        // Нам нужно, чтобы X' стал 0.
+        
+        // Проще: мы просто добавляем ошибку к selectedHeading.
+        // Если мы справа (X>0), значит реальный курс полосы должен быть "правее" (больше), 
+        // чтобы ось повернулась к нам? Нет, наоборот.
+        // Давайте проверим знаком. 
+        // Если selectedHeading=90, мы летим на восток.
+        // X > 0 (мы южнее оси).
+        // LOC говорит "ты на оси". Значит ось на самом деле смотрит на нас (южнее).
+        // Значит курс полосы должен быть больше (скажем 95).
+        
+        // Формула: NewHeading = OldHeading + ErrorAngleDeg
+        const newHeading = selectedHeading - errorAngleDeg;
+        
+        // Обновляем глобальную переменную и UI
+        selectedHeading = parseFloat(newHeading.toFixed(2));
+        document.getElementById('input-hdg').value = selectedHeading;
+        
+        console.log(`New Runway Heading: ${selectedHeading}`);
+        
+        // ВАЖНО: Перезапускаем расчет физики с новым курсом
+        // Чтобы не зациклиться, можно передать флаг или просто вызвать один раз
+        return true; // Correction applied
+    }
+    
+    return false; // No correction
+}
+
+
+
+    function updatePath() {
+  // Удаляем старое
+  if (pathLine) {
+    scene.remove(pathLine);
+    pathLine = null;
+  }
+  
+  // Удаляем новое и СРАЗУ СТРОИМ ЗАНОВО, т.к. координаты d.xPos/zPos уже пересчитаны
+  if (trailGroup) {
+      scene.remove(trailGroup);
+      trailGroup = null;
+  }
+  
+  // Строим путь заново с новыми координатами
+  rebuildTrail();
+  updateTrailDrawRange();
+}
+
+
+function updateTrailDrawRange() {
+  if (!trailLine || !trailWall) return;
+
+  let count;
+  
+  if (pathMode === 'full') {
+    // Показываем ВСЕ точки (полная длина массива)
+    // У геометрии есть атрибут position, берем его длину
+    count = trailLine.geometry.attributes.position.count;
+  } else {
+    // Режим 'trail' (или 'none', но тогда группа скрыта)
+    // Показываем только до текущего кадра
+    count = Math.max(2, currentFrame + 1);
+  }
+
+  // Применяем count
+  trailLine.geometry.setDrawRange(0, count);
+
+  const segCount = Math.max(0, count - 1);
+  trailWall.geometry.setDrawRange(0, segCount * 6);
+
+  // Разделители
+  if (trailDividers && trailDividers.userData.vertFrames) {
+      if (pathMode === 'full') {
+          // Показываем все разделители
+          trailDividers.geometry.setDrawRange(0, Infinity);
+      } else {
+          // Фильтруем по кадрам (как делали раньше)
+          const frames = trailDividers.userData.vertFrames;
+          let visibleCount = 0;
+          for (let k = 0; k < frames.length; k++) {
+              if (frames[k] <= currentFrame) visibleCount++;
+              else break;
+          }
+          trailDividers.geometry.setDrawRange(0, visibleCount);
+      }
+  }
+}
+
+
+function rebuildTrail() {
+  if (!scene || flightData.length < 2) return;
+
+  if (trailGroup) {
+      scene.remove(trailGroup);
+      // Очистка памяти
+      if (trailLine) { trailLine.geometry.dispose(); trailLine.material.dispose(); }
+      if (trailWall) { trailWall.geometry.dispose(); trailWall.material.dispose(); }
+      if (trailDividers) { trailDividers.geometry.dispose(); trailDividers.material.dispose(); }
+  }
+
+  trailGroup = new THREE.Group();
+  trailGroup.visible = showPath;
+
+  const sceneTouchdownZ = -270; 
+  const n = flightData.length;
+
+  // 1. Подготовка массивов (сразу выделяем память)
+  const linePos = new Float32Array(n * 3);
+  const wallPos = new Float32Array(n * 2 * 3);
+  
+  // Для разделителей сложно предсказать точное число, используем массив, но аккуратно
+  const divVerts = []; 
+
+  for (let i = 0; i < n; i++) {
+    const d = flightData[i];
+    const x = d.xPos;
+    const z = sceneTouchdownZ + d.zPos;
+    
+    // Расчет высоты (как в update3D)
+    let yVal = 4.2; // gearHeight
+    if (!d.raGround) {
+        const altMeters = (d.integratedHeightFt || 0) * 0.3048;
+        yVal = Math.max(4, altMeters);
+    }
+
+    // --- ЛИНИЯ ---
+    linePos[i * 3 + 0] = x;
+    linePos[i * 3 + 1] = yVal;
+    linePos[i * 3 + 2] = z;
+
+    // --- СТЕНА ---
+    // Низ (земля)
+    wallPos[(i * 2 + 0) * 3 + 0] = x;
+    wallPos[(i * 2 + 0) * 3 + 1] = 0;
+    wallPos[(i * 2 + 0) * 3 + 2] = z;
+    // Верх (путь)
+    wallPos[(i * 2 + 1) * 3 + 0] = x;
+    wallPos[(i * 2 + 1) * 3 + 1] = yVal;
+    wallPos[(i * 2 + 1) * 3 + 2] = z;
+  }
+
+  // Создаем геометрию линии
+  const lineGeom = new THREE.BufferGeometry();
+  lineGeom.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+  lineGeom.setDrawRange(0, 0);
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.9 });
+  trailLine = new THREE.Line(lineGeom, lineMat);
+  trailGroup.add(trailLine);
+
+  // Создаем геометрию стены
+  const idx = new Uint32Array((n - 1) * 6);
+  let p = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 2 + 0;     
+    const b = i * 2 + 1;     
+    const c = (i + 1) * 2 + 0; 
+    const d = (i + 1) * 2 + 1; 
+    idx[p++] = a; idx[p++] = b; idx[p++] = c;
+    idx[p++] = b; idx[p++] = d; idx[p++] = c;
+  }
+  const wallGeom = new THREE.BufferGeometry();
+  wallGeom.setAttribute('position', new THREE.BufferAttribute(wallPos, 3));
+  wallGeom.setIndex(new THREE.BufferAttribute(idx, 1));
+  wallGeom.computeVertexNormals();
+  wallGeom.setDrawRange(0, 0);
+  const wallMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false });
+  trailWall = new THREE.Mesh(wallGeom, wallMat);
+  trailGroup.add(trailWall);
+
+  // --- РАЗДЕЛИТЕЛИ ---
+  let nextMark = 1000;
+  let acc = 0;
+
+  const divIndices = []; // Новый массив для индексов кадров
+
+  for (let i = 1; i < n; i++) {
+    const x0 = linePos[(i-1)*3+0];
+    const y0 = linePos[(i-1)*3+1]; // Высота в пред. точке
+    const z0 = linePos[(i-1)*3+2];
+    
+    const x1 = linePos[i*3+0];
+    const y1 = linePos[i*3+1];     // Высота в текущей точке
+    const z1 = linePos[i*3+2];
+
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const seg = Math.hypot(dx, dz);
+
+    if (seg < 0.001) continue; // Защита от деления на ноль
+
+    while (acc + seg >= nextMark) {
+      const t = (nextMark - acc) / seg;
+      const xm = x0 + dx * t;
+      const zm = z0 + dz * t;
+      const ym = y0 + (y1 - y0) * t; // Интерполируем высоту
+
+      divVerts.push(xm, 0, zm);
+      divVerts.push(xm, ym, zm);
+     // Записываем индекс текущего кадра (i) для обеих вершин
+      divIndices.push(i, i); 
+
+      nextMark += 1000;
+      
+      // Защита от бесконечного цикла (если seg огромный)
+      if (divVerts.length > 1000000) break; 
+    }
+    acc += seg;
+  }
+
+  if (divVerts.length > 0) {
+      const divGeom = new THREE.BufferGeometry();
+      divGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(divVerts), 3));
+      divGeom.setDrawRange(0, 0);
+      const divMat = new THREE.LineBasicMaterial({ color: 0x7CFF7C, transparent: true, opacity: 0.35 });
+      trailDividers = new THREE.LineSegments(divGeom, divMat);
+      trailDividers.userData.vertFrames = divIndices; // Сохраняем в userData
+      trailGroup.add(trailDividers);
+  } else {
+      trailDividers = null;
+  }
+
+  scene.add(trailGroup);
+}
+
+
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpAngle(a, b, t) {
+  let diff = b - a;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return (a + diff * t + 360) % 360;
+}
+function mixOpt(a, b, t) {
+  if (a != null && b != null) return lerp(a, b, t);
+  return a != null ? a : b;
+}
+
+// ================================================================
+// ВОСПРОИЗВЕДЕНИЕ
+// ================================================================
+function enableControls() {
+  ["btn-play","btn-stop","btn-b10","btn-b1","btn-f1","btn-f10"].forEach(id=>{
+    document.getElementById(id).disabled = false;
+  });
+  document.getElementById("timeline").disabled = false;
+}
+function togglePlay() { isPlaying ? pause() : play(); }
+
+function play() {
+  if (!flightData.length) return;
+
+  isPlaying = true;
+  document.getElementById("btn-play").textContent = "⏸ Pause";
+
+  if (timerId) clearInterval(timerId);
+  timerId = setInterval(() => {
+    // currentFrame += playbackSpeed;
+    // currentFrame = Math.round(currentFrame);
+        currentFrame += playbackSpeed; 
+    if (currentFrame >= totalFrames) {
+      currentFrame = totalFrames - 1;
+      pause();
+    }
+
+    updateAllViews();
+  }, FRAME_MS);
+}
+function pause() {
+  isPlaying = false;
+  document.getElementById("btn-play").textContent = "▶️ Play";
+  if (timerId) { clearInterval(timerId); timerId = null; }
+}
+function stopPlayback() {
+  pause();
+  currentFrame = 0;
+  pathPoints = []; // Очистка пути
+  if (pathLine) {
+    scene.remove(pathLine);
+    pathLine = null;
+  }
+  updateAllViews();
+}
+function skipTime(sec) {
+  if (!flightData.length) return;
+  const frames = sec * FPS;
+  currentFrame = Math.max(0, Math.min(totalFrames - 1, currentFrame + frames));
+  updateAllViews();
+}
+function setSpeedFromInput() {
+  const input = document.getElementById('speed-input');
+  let val = parseFloat(input.value);
+  
+  if (isNaN(val) || val < 0.03125) val = 0.03125;
+  
+  playbackSpeed = val;
+}
+
+// Изменение скорости кнопками +/-
+function changeSpeedBy(direction) { // direction: +1 или -1
+  const input = document.getElementById('speed-input');
+  let current = parseFloat(input.value) || 1;
+
+  let newVal;
+
+  if (direction > 0) { // Увеличение (+)
+      if (current < 0.25) {
+          // Если совсем мало, сразу прыгаем на 0.25
+          newVal = 0.25;
+      } else {
+          // Ищем следующее число кратное 0.25
+          // Math.floor(current / 0.25) * 0.25 + 0.25
+          // Пример: 0.3 -> floor(1.2) = 1 -> 0.25 + 0.25 = 0.5
+          newVal = (Math.floor(current / 0.25) + 1) * 0.25;
+      }
+  } else { // Уменьшение (-)
+      if (current <= 0.25) {
+          // Если 0.25 или меньше, падаем на минимум
+          newVal = 0.03125;
+      } else {
+          let step = Math.ceil(current / 0.25);
+          if (step * 0.25 === current) step--; // Если мы ровно на сетке, шаг назад
+          newVal = step * 0.25;
+      }
+  }
+  
+  // Защита минимума
+  if (newVal < 0.03125) newVal = 0.03125;
+  
+  // Форматирование (убираем хвосты типа 0.750000001)
+  newVal = parseFloat(newVal.toFixed(5));
+  
+  input.value = newVal;
+  playbackSpeed = newVal;
+}
+
+function initTimeline() {
+  const tl = document.getElementById("timeline");
+  tl.addEventListener("input", (e) => {
+    if (!flightData.length) return;
+    const v = parseFloat(e.target.value) / 100;
+    currentFrame = Math.floor(v * (totalFrames - 1));
+    updateAllViews();
+  });
+}
+
+function updateTimelineLabel() {
+  const label = document.getElementById('time-label');
+  if (!flightData.length) {
+    label.textContent = '00:00 / 00:00';
+    return;
+  }
+  
+  // Используем реальное время из данных
+  const curTimeMs = flightData[currentFrame].timestamp;
+  const totTimeMs = flightData[flightData.length - 1].timestamp;
+  
+  const fmt = (ms) => {
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+  };
+  
+  label.textContent = `${fmt(curTimeMs)} / ${fmt(totTimeMs)}`;
+  
+  const tl = document.getElementById('timeline');
+  if (tl) {
+    tl.value = (currentFrame / (totalFrames - 1)) * 100;
+  }
+}
+
+function initPathControls() {
+  const btns = document.querySelectorAll('.path-btn');
+  console.log("Found path buttons:", btns.length); // Для отладки
+  
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      // 1. Визуальное переключение
+      btns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      // 2. Логика
+      pathMode = btn.dataset.mode;
+      console.log("Path mode set to:", pathMode);
+      
+      updatePathVisibility(); // Функция обновления
+    });
+  });
+}
+
+// ================================================================
+// ОБНОВЛЕНИЕ ВСЕХ ВИДОВ
+// ================================================================
+function updateAllViews() {
+  if (!flightData.length) return;
+  
+  const idx = Math.floor(currentFrame); // Берем целую часть для индекса
+  const d = flightData[idx];
+  // Обновляем все виды
+  drawPFD(d);
+  update3D(d);
+  updateTrailDrawRange()
+  // Обновляем таймлайн
+  const tl = document.getElementById("timeline");
+  if (tl && !tl.matches(':active')) {
+    tl.value = (currentFrame / totalFrames) * 100;
+  }
+    updateTimelineLabel();
+  // Обновляем время
+  const timeEl = document.getElementById("current-time");
+  if (timeEl) {
+    const sec = currentFrame / FPS;
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    timeEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+  }
+updateDebugPanel()
+}
+
+function initSelectedHeading() {
+  const input = document.getElementById('input-hdg');
+  input.step = "0.01"; 
+
+  input.addEventListener('change', (e) => {
+    const val = parseFloat(e.target.value);
+    if (!isNaN(val)) {
+      console.log(`New Runway Heading set: ${val}`);
+      selectedHeading = val; // Обновляем глобальную переменную
+      
+      // ИСПОЛЬЗУЕМ createRunwayNumber, которая работает
+      createRunwayNumber(-40);
+      
+      // Пересчет траектории
+      calculateDistanceAndHeight(); 
+      updatePath();
+      updateAllViews(); 
+    }
+  });
+}
+
+
+
+function updateRunwayNumber() {
+  // 1. Вычисляем цифру из текущего selectedHeading
+  // Если heading 0 (не задан), рисуем дефолт (например 36 или пустой)
+  let headingToUse = selectedHeading || 260; // Дефолт 260 (26), если 0
+  let numberMesh;
+  let num = Math.round(headingToUse / 10);
+  if (num === 0) num = 36; 
+  if (num > 36) num -= 36; // На случай странных значений > 360
+  
+  const text = num.toString().padStart(2, '0');
+  console.log(`Updating Runway Number to: ${text} (Hdg: ${headingToUse})`);
+
+  // 2. Удаляем старый меш
+  if (numberMesh) {
+    scene.remove(numberMesh);
+    if (numberMesh.material.map) numberMesh.material.map.dispose();
+    if (numberMesh.material) numberMesh.material.dispose();
+    if (numberMesh.geometry) numberMesh.geometry.dispose();
+  }
+
+  // 3. Рисуем текстуру
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  
+  ctx.fillStyle = 'rgba(0,0,0,0)'; 
+  ctx.clearRect(0, 0, 256, 256);
+  
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 140px Arial'; // Чуть меньше, чтобы точно влезало
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  // Поворот цифры (чтобы читалась при подлете)
+  ctx.translate(128, 128);
+  ctx.rotate(-Math.PI / 2); 
+  ctx.fillText(text, 0, 0);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const geom = new THREE.PlaneGeometry(12, 12);
+  const mat = new THREE.MeshBasicMaterial({ 
+    map: tex, 
+    transparent: true,
+    opacity: 0.9
+  });
+  
+  numberMesh = new THREE.Mesh(geom, mat);
+  numberMesh.rotation.x = -Math.PI / 2;
+  
+  // 4. Фиксированная позиция
+  numberMesh.position.set(0, 0.05, -40); // Z = -40
+  numberMesh.renderOrder = 3;
+
+  scene.add(numberMesh);
+}
+
+function roundTo4(num) {
+    if (typeof num !== 'number') return num;
+    return Math.round(num * 10000) / 10000;
+}
+
+function filterRepeats(arr) {
+    if (!arr || arr.length === 0) return arr;
+    const newArr = [...arr];
+    let lastUniqueVal = null; 
+    for (let i = 0; i < newArr.length; i++) {
+        const val = newArr[i];
+        if (val === null || val === undefined) continue;
+        if (i === 0) {
+            lastUniqueVal = val;
+            continue;
+        }
+        if (val === lastUniqueVal) {
+            newArr[i] = null;
+        } else {
+            lastUniqueVal = val;
+        }
+    }
+    return newArr;
+}
+
+function fillGaps(arr) {
+    const newArr = [...arr];
+    const len = newArr.length;
+    for (let i = 0; i < len; i++) {
+        if (newArr[i] === null || newArr[i] === undefined) {
+            let prevIdx = i - 1;
+            while (prevIdx >= 0 && (newArr[prevIdx] === null || newArr[prevIdx] === undefined)) prevIdx--;
+            let nextIdx = i + 1;
+            while (nextIdx < len && (newArr[nextIdx] === null || newArr[nextIdx] === undefined)) nextIdx++;
+            const prevVal = (prevIdx >= 0) ? newArr[prevIdx] : null;
+            const nextVal = (nextIdx < len) ? newArr[nextIdx] : null;
+            if (prevVal !== null && nextVal !== null && typeof prevVal === 'number' && typeof nextVal === 'number') {
+                const totalSteps = nextIdx - prevIdx;
+                const stepVal = (nextVal - prevVal) / totalSteps;
+                const currentStep = i - prevIdx;
+                newArr[i] = roundTo4(prevVal + (stepVal * currentStep));
+            } else if (prevVal === null && nextVal !== null) {
+                newArr[i] = nextVal;
+            } else if (prevVal !== null && nextVal === null) {
+                newArr[i] = prevVal;
+            }
+        }
+    }
+    return newArr;
+}
+
+function resampleArray(data, srcFreq, destFreq, isNumeric) {
+    const ratio = destFreq / srcFreq;
+    const srcLen = data.length;
+    const destLen = Math.floor(srcLen * ratio);
+    const result = new Array(destLen);
+    for (let i = 0; i < destLen; i++) {
+        const srcIndex = i / ratio;
+        const p0 = Math.floor(srcIndex);
+        const p1 = Math.min(p0 + 1, srcLen - 1);
+        const t = srcIndex - p0;
+        const val0 = data[p0];
+        const val1 = data[p1];
+        if (isNumeric) {
+            const v0 = (val0 !== null && val0 !== undefined) ? val0 : 0;
+            const v1 = (val1 !== null && val1 !== undefined) ? val1 : 0;
+            
+            // Эвристика: если разница > 300, считаем это переходом угла через 0/360
+            if (Math.abs(v1 - v0) > 300) {
+                 let diff = v1 - v0;
+                 // Корректируем разницу по кратчайшему пути
+                 if (diff > 180) diff -= 360;
+                 else if (diff < -180) diff += 360;
+                 
+                 // Интерполируем и нормализуем результат в 0..360
+                 let val = v0 + diff * t;
+                 if (val < 0) val += 360;
+                 if (val >= 360) val -= 360;
+                 
+                 result[i] = roundTo4(val);
+            } else {
+                 // Стандартная линейная интерполяция
+                 result[i] = roundTo4(v0 + (v1 - v0) * t);
+            }
+        } else {
+            result[i] = val0;
+        }
+    }
+    return result;
+}
+
+/**
+ * Фильтрация высоты на основе вертикальной скорости.
+ * Проверяет каждое значение: если оно сильно отклоняется от прогноза (Alt_prev + VS*dt),
+ * оно помечается как null.
+ */
+function filterAltitudeByVS(altArray, vsArray, timeArray) {
+    if (!altArray || !vsArray || !timeArray) return altArray;
+    
+    // Создаем копию
+    const cleanAlt = [...altArray];
+    const len = cleanAlt.length;
+    
+    // Ищем первое валидное значение
+    let lastValidIdx = cleanAlt.findIndex(v => v !== null && v !== undefined);
+    if (lastValidIdx === -1) return cleanAlt;
+    
+    // Проходим по всему массиву
+    for (let i = lastValidIdx + 1; i < len; i++) {
+        const currAlt = cleanAlt[i];
+        
+        // Если значения нет, пропускаем
+        if (currAlt === null || currAlt === undefined) continue;
+        
+        // Данные для прогноза
+        const prevAlt = cleanAlt[lastValidIdx];
+        const dt = (timeArray[i] - timeArray[lastValidIdx]) / 1000; // сек
+        
+        // Берем VS из текущего кадра (или предыдущего валидного, если текущий пуст)
+        // Если VS нет, считаем 0
+        let vs = vsArray[i];
+        if (vs === null || vs === undefined) vs = vsArray[lastValidIdx] || 0;
+        
+        // Прогноз изменения высоты: (ft/min / 60) * sec
+        const predictedDelta = (vs / 60) * dt;
+        const predictedAlt = prevAlt + predictedDelta;
+        
+        // Допустимое отклонение.
+        // У Hcor1 шаг 32 фута. Плюс шум. Плюс неточность VS.
+        // Разрешаем отклонение на 64 фута (2 шага квантования) + 50% от расчетного изменения
+        const margin = 64 + Math.abs(predictedDelta * 0.5);
+        
+        // Проверка: Насколько текущая высота отличается от прогноза?
+        // Особый случай: Если VS отрицательная (снижение), а высота ВЫРОСЛА -> это явная ошибка (если рост > 10 футов)
+        // Но учитываем, что при VS ~ 0 может быть шум.
+        
+        let isValid = true;
+        
+        if (vs < -100 && (currAlt - prevAlt) > 10) {
+            // Явное противоречие: снижение > 100fpm, а высота выросла
+            isValid = false;
+            // console.log(`Anomaly at ${i}: Climbing while descending. Prev: ${prevAlt}, Curr: ${currAlt}, VS: ${vs}`);
+        } else if (Math.abs(currAlt - predictedAlt) > margin) {
+            // Слишком большое отклонение от прогноза
+            isValid = false;
+        }
+        
+        if (isValid) {
+            lastValidIdx = i; // Точка подтверждена, теперь отсчитываем от неё
+        } else {
+            cleanAlt[i] = null; // Удаляем выброс
+        }
+    }
+    
+    return cleanAlt;
+}
+
+// ================================================================
+// DEBUG ФУНКЦИИ 
+// ================================================================
+
+let isDebugVisible = false;
+
+function toggleDebug() {
+  isDebugVisible = !isDebugVisible;
+  const panel = document.getElementById('debug-panel');
+  const btn = document.getElementById('btn-debug');
+  
+  if (!panel) return;
+
+  if (isDebugVisible) {
+    panel.style.display = 'flex';
+    if (btn) btn.classList.add('active');
+    updateDebugPanel(); // Сразу обновляем при открытии
+  } else {
+    panel.style.display = 'none';
+    if (btn) btn.classList.remove('active');
+  }
+}
+
+function updateDebugPanel() {
+  // Проверки безопасности
+  if (!isDebugVisible) return;
+  if (!flightData || flightData.length === 0) return;
+  const content = document.getElementById('debug-content');
+  if (!content) return;
+
+  const d = flightData[currentFrame];
+  if (!d) return;
+
+  // 1. Получаем все ключи объекта и сортируем их по алфавиту для удобства
+  const keys = Object.keys(d).sort();
+
+  let html = '';
+
+  // 2. Проходимся по всем ключам
+  keys.forEach(key => {
+    const rawVal = d[key];
+    let displayVal = rawVal;
+    let valClass = 'debug-val';
+
+    // 3. Форматирование значений
+    if (rawVal === null || rawVal === undefined) {
+      displayVal = 'null';
+      valClass += ' null'; // Красный цвет
+    } 
+    else if (typeof rawVal === 'boolean') {
+      displayVal = rawVal ? 'TRUE' : 'FALSE';
+    } 
+    else if (typeof rawVal === 'number') {
+      // Если это timestamp, показываем как есть или переводим в секунды (опционально)
+      if (key === 'timestamp') {
+         displayVal = (rawVal / 1000).toFixed(2) + ' s';
+      } else {
+         // Округляем дробные до 4 знаков, целые оставляем как есть
+         displayVal = Number.isInteger(rawVal) ? rawVal : parseFloat(rawVal.toFixed(4));
+      }
+    }
+
+    html += `
+      <div class="debug-row">
+        <span class="debug-key">${key}</span>
+        <span class="${valClass}">${displayVal}</span>
+      </div>
+    `;
+  });
+  
+  content.innerHTML = html;
+}
+
+
+
+</script>
+</body>
+</html>
