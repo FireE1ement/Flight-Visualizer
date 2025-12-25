@@ -540,7 +540,6 @@
 <div id="loading">
   <div id="loading-inner">
     <div></div>
-    <div>Загрузка и обработка данных…</div>
   </div>
 </div>
 
@@ -570,7 +569,15 @@ const FPS = 32;
 const FRAME_MS = 1000 / FPS;
 const GS_ANGLE_DEG = 3; // стандартная глиссада
 const HEIGHT_PER_NM = 300; // ft на 1 морскую милю при 3°
+const GEAR_TRANSITION_SEC = 2;
+const GEAR_TRANSITION_FRAMES = GEAR_TRANSITION_SEC * FPS;
 
+let gearFrac = 1;      // 0..1, фактическое положение
+let targetGearFrac = 1;
+let noseStrut, mainStrutL, mainStrutR, nWheel, mWheelL, mWheelR;
+let strutOriginalY = { nose: -2.5, mainL: -2.5, mainR: -2.5 }; // Исходные позиции
+let wheelOriginalY = { nose: -3.5, mainL: -3.8, mainR: -3.8 };
+let strutCompression = 0; // 0-1 (сжатие)
 let selectedHeading = 263;
 let flightData = [];
 let totalFrames = 0;
@@ -1112,7 +1119,8 @@ function createAirplane() {
 
   const bodyRadius = 1.9;
   const bodyLength = 28.0; 
-
+  const wheelGeom = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 16);
+  wheelGeom.rotateX(Math.PI / 2);
   // === 1. ФЮЗЕЛЯЖ ===
   const bodyGeom = new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyLength, 32);
   const body = new THREE.Mesh(bodyGeom, matWhite);
@@ -1231,33 +1239,53 @@ function createAirplane() {
   lStab.castShadow = true;
   airplane3d.add(lStab);
 
-  // === 7. ШАССИ ===
-  const wheelGeom = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 16);
-  wheelGeom.rotateX(Math.PI / 2); 
+    // ---- НОСОВОЕ ШАССИ ----
+    const nosePivot = new THREE.Group();
+    nosePivot.name = 'nosePivot';
+    nosePivot.position.set(13, 0, 0);   // ТОЧКА КРЕПЛЕНИЯ К ФЮЗЕЛЯЖУ
 
-  // Нос
-  const noseStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 2.0), matMetal);
-  noseStrut.position.set(13, -2.5, 0); 
-  airplane3d.add(noseStrut);
-  const nWheel = new THREE.Mesh(wheelGeom, matDark);
-  nWheel.position.set(13, -3.5, 0);
-  airplane3d.add(nWheel);
+    const noseStrut = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 2.0),
+      matMetal
+    );
+    noseStrut.position.set(0, -1.0, 0);    // вниз от шарнира
+    noseStrut.name = 'noseStrut';
 
-  // Основные
-  const mainStrutL = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2.5), matMetal);
-  mainStrutL.position.set(-1, -2.5, 3.0); 
-  airplane3d.add(mainStrutL);
-  const mWheelL = new THREE.Mesh(wheelGeom, matDark);
-  mWheelL.position.set(-1, -3.8, 3.0);
-  airplane3d.add(mWheelL);
+    const nWheel = new THREE.Mesh(wheelGeom, matDark);
+    nWheel.position.set(0, -2.0, 0);
+    nWheel.name = 'nWheel';
 
-  const mainStrutR = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2.5), matMetal);
-  mainStrutR.position.set(-1, -2.5, -3.0);
-  airplane3d.add(mainStrutR);
-  const mWheelR = new THREE.Mesh(wheelGeom, matDark);
-  mWheelR.position.set(-1, -3.8, -3.0);
-  airplane3d.add(mWheelR);
+    nosePivot.add(noseStrut);
+    nosePivot.add(nWheel);
+    airplane3d.add(nosePivot);
 
+    // ---- ЛЕВОЕ ГЛАВНОЕ ----
+    const mainPivotL = new THREE.Group();
+    mainPivotL.name = 'mainPivotL';
+    mainPivotL.position.set(-1, 0, 3.0); // верх крепления к центроплану
+
+    const mainStrutL = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.2, 0.2, 2.5),
+      matMetal
+    );
+    mainStrutL.position.set(0, -1.25, 0);
+    mainStrutL.name = 'mainStrutL';
+
+    const mWheelL = new THREE.Mesh(wheelGeom, matDark);
+    mWheelL.position.set(0, -2.5, 0);
+    mWheelL.name = 'mWheelL';
+
+    mainPivotL.add(mainStrutL);
+    mainPivotL.add(mWheelL);
+    airplane3d.add(mainPivotL);
+
+    // ---- ПРАВОЕ ГЛАВНОЕ ----
+    const mainPivotR = mainPivotL.clone();
+    mainPivotR.name = 'mainPivotR';
+    mainPivotR.position.set(-1, 0, -3.0);
+    mainPivotR.getObjectByName('mainStrutL').name = 'mainStrutR';
+    mainPivotR.getObjectByName('mWheelL').name    = 'mWheelR';
+    airplane3d.add(mainPivotR);
 
   // ФИНАЛ
   airplane3d.rotation.y = Math.PI / 2;
@@ -1288,47 +1316,128 @@ function createAirplane() {
   updateTrailDrawRange(); 
 }
 
+function updateGearDeploy(f) {
+  if (!airplane3d) return;
+
+  const nosePivot  = airplane3d.getObjectByName('nosePivot');
+  const mainPivotL = airplane3d.getObjectByName('mainPivotL');
+  const mainPivotR = airplane3d.getObjectByName('mainPivotR');
+  if (!nosePivot || !mainPivotL || !mainPivotR) return;
+
+  // f: 0 = убрано, 1 = выпущено
+
+  // Носовая: прячется ближе к носу и выходит спереди назад -> вращение вокруг оси Y
+  const noseAngle = THREE.MathUtils.degToRad(90 * (1 - f)); // 90° вдоль полёта (убрано) -> 0° вниз
+
+  nosePivot.rotation.set(0, 0, 0);
+  nosePivot.rotation.z = noseAngle;
+
+  // Главные: прячутся в центроплан и выходят к крыльям -> вокруг оси X (вдоль фюзеляжа)
+  const mainAngle = THREE.MathUtils.degToRad(90 * (1 - f)); // 90° под фюзеляжем -> 0° вниз
+
+  mainPivotL.rotation.set(0, 0, 0);
+  mainPivotR.rotation.set(0, 0, 0);
+  mainPivotL.rotation.x =  mainAngle;  // от крыла к центру
+  mainPivotR.rotation.x = -mainAngle;  // симметрично
+}
+
+const GEAR_ORIG = {
+  noseStrutY: -2.5,
+  noseWheelY: -3.5,
+  mainStrutY: -2.5,
+  mainWheelY: -3.8,
+};
+
+const MAX_COMP_M   = 0.8;   // ход стойки
+const START_COMP_H = 1.5;   // колёса 1.5 м над землёй — начинаем сжатие
+const FULL_COMP_H  = 0.0;   // колёса на земле — полное сжатие
+
+function updateGearCompressionByWheel(wheelHeightM) {
+  if (!airplane3d) return;
+
+  const noseStrut  = airplane3d.getObjectByName('noseStrut');
+  const mainStrutL = airplane3d.getObjectByName('mainStrutL');
+  const mainStrutR = airplane3d.getObjectByName('mainStrutR');
+  const nWheel     = airplane3d.getObjectByName('nWheel');
+  const mWheelL    = airplane3d.getObjectByName('mWheelL');
+  const mWheelR    = airplane3d.getObjectByName('mWheelR');
+  if (!noseStrut || !mainStrutL || !mainStrutR || !nWheel || !mWheelL || !mWheelR) return;
+
+  let k = 0;
+  if (wheelHeightM <= START_COMP_H && wheelHeightM >= FULL_COMP_H) {
+    k = (START_COMP_H - wheelHeightM) / (START_COMP_H - FULL_COMP_H);   // 0..1
+  } else if (wheelHeightM < FULL_COMP_H) {
+    k = 1;
+  }
+
+  const dy = MAX_COMP_M * k;
+
+  noseStrut.position.y  = GEAR_ORIG.noseStrutY  + dy * 0.5;
+  mainStrutL.position.y = GEAR_ORIG.mainStrutY  + dy * 0.5;
+  mainStrutR.position.y = GEAR_ORIG.mainStrutY  + dy * 0.5;
+
+  nWheel.position.y  = GEAR_ORIG.noseWheelY  + dy;
+  mWheelL.position.y = GEAR_ORIG.mainWheelY + dy;
+  mWheelR.position.y = GEAR_ORIG.mainWheelY + dy;
+
+  return dy;  // важно: возвращаем фактическую компрессию
+}
+
 function update3D(d) {
   if (!airplane3d) return;
-  
-  // Координаты уже рассчитаны в calculateDistanceAndHeight
-  // Нам нужно только добавить смещение модели полосы в сцене (z = -215 - это точка касания в 3D мире)
-  const sceneTouchdownZ = -270; 
-  
-  // В calculateDistanceAndHeight: 0 = точка касания, отрицательные Z = подлет.
-  // В scene: -270 = точка касания.
-  // Значит:
-  let zPos = sceneTouchdownZ + d.zPos; 
-  let xPos = d.xPos; // Боковое смещение (метры)
-  
-  const gearHeight = 4.2; 
-    
-    // Используем интегрированную высоту
-    let hFt = d.integratedHeightFt;
-    if (hFt === undefined) hFt = d.radioAltitude || 0; // На всякий случай
-    
-    // Защита: не ниже 0 (относительно бетона)
-    if (hFt < 0) hFt = 0;
 
-    if (d.radioAltitude !== null && d.radioAltitude < 0) {
-         hFt = 0;
-    }
-    
-    let yPos = (hFt * 0.3048) + gearHeight;
-    
-    airplane3d.position.set(xPos, yPos, zPos);
-    
-    
+  const sceneTouchdownZ = -270;
+  const xPos = d.xPos;
+  const zPos = sceneTouchdownZ + d.zPos;
+  const gearHeight = 4.2;
+
+  if (typeof d.gearDownCmd === 'number') {
+    targetGearFrac = d.gearDownCmd ? 1 : 0;
+  }
+
+  // плавный переход за 2 секунды
+  const step = 1 / GEAR_TRANSITION_FRAMES;
+  if (gearFrac < targetGearFrac) gearFrac = Math.min(gearFrac + step, targetGearFrac);
+  else if (gearFrac > targetGearFrac) gearFrac = Math.max(gearFrac - step, targetGearFrac);
+
+  // обновляем ориентацию шасси
+  updateGearDeploy(gearFrac);
+
+  // высота колёс над землёй из данных
+  let hFt = d.integratedHeightFt;
+  if (typeof hFt !== 'number') hFt = d.radioAltitude || 0;
+  if (hFt < 0) hFt = 0;
+  const wheelHeightM = hFt * 0.3048;
+
+  // сначала считаем компрессию по высоте колёс
+  const dy = updateGearCompressionByWheel(wheelHeightM) || 0;
+
+  // центр = высота колёс + геометрическая высота шасси - фактическая компрессия
+  let centerHeightM = wheelHeightM + gearHeight - dy;
+
+  // не даём фюзеляжу «провалиться» ниже максимальной компрессии
+  const minCenter = gearHeight - MAX_COMP_M;
+  if (centerHeightM < minCenter) centerHeightM = minCenter;
+
+
+  airplane3d.position.set(xPos, centerHeightM, zPos);
+
+
   // Вращение модели
-  const runwayHeading = selectedHeading;
-  const planeHeading = d.heading || runwayHeading;
-  let headingDiff = planeHeading - runwayHeading;
-  
-  // Нормализация угла
-  while (headingDiff > 180) headingDiff -= 360;
-  while (headingDiff < -180) headingDiff += 360;
-  
-  const yaw = Math.PI/2 - THREE.MathUtils.degToRad(headingDiff);
+  const runwayHeading = selectedHeading || 0;        // 0..360
+  let planeHeading = d.heading || 0;                 // 0..360
+
+// нормализуем оба в 0..360
+planeHeading = (planeHeading % 360 + 360) % 360;
+const rwHdgNorm = (runwayHeading % 360 + 360) % 360;
+
+// разность с приведением к диапазону [-180; +180]
+let headingDiff = planeHeading - rwHdgNorm;
+if (headingDiff > 180)  headingDiff -= 360;
+if (headingDiff < -180) headingDiff += 360;
+
+// yaw: нос самолёта вдоль собственного курса, смещённого от полосы на headingDiff
+  const yaw = Math.PI / 2 - THREE.MathUtils.degToRad(headingDiff);
   const pitch = THREE.MathUtils.degToRad(d.pitch);
   const roll = THREE.MathUtils.degToRad(d.roll);
 
@@ -2199,7 +2308,7 @@ function handleFile(e) {
       for (let i = 0; i < length; i++) {
         const d = {};
         d.timestamp = i * (1000 / targetHz); 
-
+        
         d.pitch = getVal('PITCH', i);
         if (d.pitch === 0) d.pitch = getVal('Pitch', i);
 
@@ -2211,7 +2320,7 @@ function handleFile(e) {
 
         d.airspeed = getVal('Vcom', i);
         if (d.airspeed === 0) d.airspeed = getVal('IAS', i);
-
+          
         d.verticalSpeed = getVal('Vy', i);
         if (d.verticalSpeed === 0) d.verticalSpeed = getVal('VS', i);
 
@@ -2262,83 +2371,37 @@ function handleFile(e) {
              d.onGround = (agVal > 0.5);
         }
 
+    // LGlv.dn: "gear up" / "not up" или пусто
+    let gearStr = getValNullable('LGlv.dn', i);
+
+if (gearStr === null || gearStr === undefined || gearStr === '') {
+    // если ячейка пустая — просто держим предыдущее значение
+    if (i === 0) {
+        d.gearDownCmd = 1; // стартовое состояние: выпущено
+    } else {
+        d.gearDownCmd = flightData[i - 1].gearDownCmd;
+    }
+} else if (typeof gearStr === 'string') {
+    const s = gearStr.toLowerCase().trim();
+    // 1 = выпущено, 0 = убрано
+    if (s.includes('gear up'))      d.gearDownCmd = 0;
+    else if (s.includes('not up'))  d.gearDownCmd = 1;
+    else                            d.gearDownCmd = (i > 0 ? flightData[i - 1].gearDownCmd : 1);
+} else {
+    // на случай чисел/других типов
+    d.gearDownCmd = (i > 0 ? flightData[i - 1].gearDownCmd : 1);
+}
+
+
         flightData.push(d);
       }
       
-// --- ИНТЕГРАЦИЯ ВЫСОТЫ (SAFE VERSION) ---
-if (flightData && flightData.length > 0) {
-          let tdIndex = -1;
-          
-          // 1. Ищем точку касания
-          // Пробуем найти переход onGround: false -> true
-          for (let i = 0; i < flightData.length - 1; i++) {
-              if (flightData[i] && flightData[i+1]) { // Проверка на существование
-                  if (!flightData[i].onGround && flightData[i+1].onGround) {
-                      tdIndex = i + 1;
-                      break;
-                  }
-              }
-          }
-          
-          // Если не нашли, ищем минимум RA
-          if (tdIndex === -1) {
-              let minRA = 10000;
-              for (let i = 0; i < flightData.length; i++) {
-                  if (!flightData[i]) continue;
-                  let ra = flightData[i].radioAltitude;
-                  if (ra !== null && ra !== undefined && ra < minRA) {
-                      minRA = ra;
-                      tdIndex = i;
-                  }
-              }
-          }
-          
-          // Фолбэк на последний кадр
-          if (tdIndex === -1) tdIndex = flightData.length - 1;
-          
-          // console.log("Touchdown Index:", tdIndex);
 
-          // 2. Интеграция
-          // Убедимся, что точка касания существует
-          if (flightData[tdIndex]) {
-              flightData[tdIndex].integratedHeightFt = 0;
-              
-              const dt = 1.0 / 32.0; // Жестко задаем 32 Гц (так как мы ресемплили к 32)
-              
- // НАЗАД
- for (let i = tdIndex - 1; i >= 0; i--) {
-                  const current = flightData[i];
-                  const next = flightData[i+1];
-                  
-                  if (current && next) {
-                      const vsFPS = (current.verticalSpeed || 0) / 60.0;
-                      // Защита от NaN
-                      let hNext = next.integratedHeightFt;
-                      if (typeof hNext !== 'number') hNext = 0;
-                      
-                      current.integratedHeightFt = hNext - (vsFPS * dt);
-                  }
-              }
-              
-              // ВПЕРЕД
-              for (let i = tdIndex + 1; i < flightData.length; i++) {
-                  const current = flightData[i];
-                  const prev = flightData[i-1];
-                  
-                  if (current && prev) {
-                      const vsFPS = (prev.verticalSpeed || 0) / 60.0;
-                      let hPrev = prev.integratedHeightFt;
-                      if (typeof hPrev !== 'number') hPrev = 0;
-                      
-                      current.integratedHeightFt = hPrev + (vsFPS * dt);
-                      if (current.radioAltitude !== null && current.radioAltitude < -2) {
-                      current.integratedHeightFt = 0;
-                      }
-                      if (current.integratedHeightFt < 0) current.integratedHeightFt = 0;
-                  }
-              }
-          }
-      }
+
+
+  
+
+        
       // ПОИСК И УСТАНОВКА КУРСА ПОЛОСЫ (HDNsel или Авто-расчет)
       // 1. Пробуем найти явный параметр HDNsel
       const hdnSelKey = Object.keys(finalData).find(k => k.includes('HDNsel') || k.includes('HDN.sel'));
@@ -2457,6 +2520,7 @@ for (let i = 0; i < processedData.length; i++) {
         }
       }
       
+
       // Обновляем UI с найденным курсом
       document.getElementById('input-hdg').value = selectedHeading;
       createRunwayNumber(-40); 
@@ -2468,10 +2532,72 @@ for (let i = 0; i < processedData.length; i++) {
         console.log("Runway Heading refined by LOC. Recalculating path...");
         calculateDistanceAndHeight(); // Второй проход (точный)
     }
+
+  // --- ПРАВИЛЬНОЕ ИНТЕГРИРОВАНИЕ ОТ ПЕРВОГО RA <= -4 ---
+if (flightData && flightData.length > 0) {
+  const dt = 1 / 32;
+
+  // 1. Очистка
+  for (let i = 0; i < flightData.length; i++) {
+    delete flightData[i].integratedHeightFt;
+  }
+
+  // 2. Первый кадр RA <= -4
+  let touchIndex = -1;
+  for (let i = 0; i < flightData.length; i++) {
+    if (flightData[i].radioAltitude !== null && flightData[i].radioAltitude <= -2) {
+      touchIndex = i;
+      break;
+    }
+  }
+
+  if (touchIndex === -1) {
+    console.warn('RA <= -4 не найден');
+  } else {
+    console.log(`Касание: кадр ${touchIndex}, RA=${flightData[touchIndex].radioAltitude}`);
+
+    // 3. H[touchIndex] = 0
+    flightData[touchIndex].integratedHeightFt = 0;
+
+    // 4. НАЗАД: H[i] = H[i+1] - VS[curr] * dt  (ИНВЕРСИЯ!)
+    for (let i = touchIndex - 1; i >= 0; i--) {
+      const curr = flightData[i];
+      const next = flightData[i + 1];
+      if (!curr || !next) continue;
+
+      const vsFPS = -(curr.verticalSpeed || 0) / 60;  // ✅ ИНВЕРТИРОВАННЫЙ VS[curr]
+      curr.integratedHeightFt = (next.integratedHeightFt || 0) + vsFPS * dt;
+    }
+
+    // 5. ВПЕРЕД: H[i] = H[i-1] + VS[prev] * dt (без изменений)
+    for (let i = touchIndex + 1; i < flightData.length; i++) {
+      const curr = flightData[i];
+      const prev = flightData[i - 1];
+      if (!curr || !prev) continue;
+
+      const vsFPS = (prev.verticalSpeed || 0) / 60;
+      let hNew = (prev.integratedHeightFt || 0) + vsFPS * dt;
+      if (hNew < 0) hNew = 0;
+      curr.integratedHeightFt = hNew;
+    }
+
+    // 6. Финальная защита RA <= -4
+    for (let i = touchIndex; i < flightData.length; i++) {
+      if (flightData[i].radioAltitude !== null && flightData[i].radioAltitude <= -2) {
+        flightData[i].integratedHeightFt = 0;
+      }
+    }
+
+    console.log(`ПРОВЕРКА: кадр ${touchIndex-1}: H=${flightData[touchIndex-1]?.integratedHeightFt}`);
+  }
+}
+
       totalFrames = flightData.length;
       currentFrame = 0;
       enableControls();
       updateAllViews();
+      rebuildTrail();
+      updateTrailDrawRange();
       console.log(`${totalFrames} кадров (${(totalFrames/FPS).toFixed(1)}с)`);
 
     } catch (err) {
@@ -2587,7 +2713,7 @@ for (let i = 0; i < flightData.length; i++) {
     d.stickyOnGround = true;
   } else {
     // После того как был отрыв — дальше смотрим только на актуальный RA
-    d.stickyOnGround = (ra !== null && ra <= -4);
+    d.stickyOnGround = (ra !== null && ra <= -2);
   }
 }
         // БАЗОВЫЙ ВАРИАНТ: если вообще не нашли касание (проход/уход на второй круг)
@@ -2654,7 +2780,11 @@ for (let i = 0; i < flightData.length; i++) {
         // Коррекция высоты
         flightData.forEach(d => {
             d.correctedAltitude = d.altitude - altitudeBias;
-            d.integratedHeightFt = d.correctedAltitude;
+            
+            if (!d.integratedHeightFt) {
+          d.integratedHeightFt = d.correctedAltitude;
+            }
+
         });
 
         // 2. Расчет векторов
@@ -2777,7 +2907,7 @@ flightData.forEach(d => {
 
 		const calculateStep = (dataPoint, dtSeconds) => {
 			const gsMps = (dataPoint.groundSpeed || 0) * 0.514444; 
-			let trackToUse = dataPoint.smoothedTrack; // smoothedTrack или targetTrack,
+			let trackToUse = dataPoint.targetTrack; // smoothedTrack или targetTrack,
 
 			// Нормализация разницы трека относительно курса ВПП в диапазон -180..180
 			let trackDelta = trackToUse - selectedHeading;
@@ -2991,10 +3121,10 @@ function rebuildTrail() {
     const z = sceneTouchdownZ + d.zPos;
     
     // Расчет высоты (как в update3D)
-    let yVal = 4.2; // gearHeight
+    let yVal = 2; // gearHeight
     if (!d.raGround) {
         const altMeters = (d.integratedHeightFt || 0) * 0.3048;
-        yVal = Math.max(4, altMeters);
+        yVal = Math.max(2, altMeters);
     }
 
     // --- ЛИНИЯ ---
@@ -3219,30 +3349,29 @@ function initTimeline() {
 }
 
 function updateTimelineLabel() {
-  const label = document.getElementById('time-label');
-  if (!flightData.length) {
-    label.textContent = '00:00 / 00:00';
-    return;
-  }
-  
-  // Используем реальное время из данных
-  const curTimeMs = flightData[currentFrame].timestamp;
-  const totTimeMs = flightData[flightData.length - 1].timestamp;
-  
-  const fmt = (ms) => {
-    const totalSec = Math.floor(ms / 1000);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+  if (!flightData || !flightData.length) return;
+
+  // ограничиваем currentFrame в допустимый диапазон
+  if (currentFrame < 0) currentFrame = 0;
+  if (currentFrame >= flightData.length) currentFrame = flightData.length - 1;
+
+  const d = flightData[currentFrame];
+  if (!d) return;
+
+  const ms = d.timestamp || 0;
+  const totalMs = flightData[flightData.length - 1].timestamp || 0;
+
+  const fmt = (t) => {
+    const sec = Math.floor(t / 1000);
+    const m = Math.floor(sec / 60).toString().padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
-  
-  label.textContent = `${fmt(curTimeMs)} / ${fmt(totTimeMs)}`;
-  
-  const tl = document.getElementById('timeline');
-  if (tl) {
-    tl.value = (currentFrame / (totalFrames - 1)) * 100;
-  }
+
+  document.getElementById('time-label').textContent =
+    `${fmt(ms)} / ${fmt(totalMs)}`;
 }
+
 
 function initPathControls() {
   const btns = document.querySelectorAll('.path-btn');
@@ -3267,29 +3396,41 @@ function initPathControls() {
 // ОБНОВЛЕНИЕ ВСЕХ ВИДОВ
 // ================================================================
 function updateAllViews() {
-  if (!flightData.length) return;
-  
-  const idx = Math.floor(currentFrame); // Берем целую часть для индекса
+  if (!flightData || !flightData.length) return;
+
+  // безопасный индекс
+  let idx = Math.floor(currentFrame);
+  if (idx < 0) idx = 0;
+  if (idx >= flightData.length) idx = flightData.length - 1;
+
   const d = flightData[idx];
+  if (!d) return;
+
   // Обновляем все виды
   drawPFD(d);
   update3D(d);
-  updateTrailDrawRange()
-  // Обновляем таймлайн
+  updateTrailDrawRange();
+  updateDebugPanel();
+
+  // Обновляем таймлайн (если ползунок сейчас не перетаскивают)
   const tl = document.getElementById("timeline");
   if (tl && !tl.matches(':active')) {
-    tl.value = (currentFrame / totalFrames) * 100;
+    tl.value = (idx / (totalFrames - 1 || 1)) * 100;
   }
-    updateTimelineLabel();
+
+  // Обновляем подпись таймлайна (использует d.timestamp)
+  updateTimelineLabel();
+
   // Обновляем время
   const timeEl = document.getElementById("current-time");
   if (timeEl) {
-    const sec = currentFrame / FPS;
+    const sec = idx / FPS;
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
-    timeEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    timeEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
   }
-updateDebugPanel()
+
+  
 }
 
 function initSelectedHeading() {
@@ -3555,41 +3696,38 @@ function toggleDebug() {
 }
 
 function updateDebugPanel() {
-  // Проверки безопасности
   if (!isDebugVisible) return;
   if (!flightData || flightData.length === 0) return;
+
   const content = document.getElementById('debug-content');
   if (!content) return;
 
-  const d = flightData[currentFrame];
+  // безопасный индекс
+  let idx = Math.floor(currentFrame);
+  if (idx < 0) idx = 0;
+  if (idx >= flightData.length) idx = flightData.length - 1;
+
+  const d = flightData[idx];
   if (!d) return;
 
-  // 1. Получаем все ключи объекта и сортируем их по алфавиту для удобства
   const keys = Object.keys(d).sort();
-
   let html = '';
 
-  // 2. Проходимся по всем ключам
   keys.forEach(key => {
     const rawVal = d[key];
     let displayVal = rawVal;
     let valClass = 'debug-val';
 
-    // 3. Форматирование значений
     if (rawVal === null || rawVal === undefined) {
       displayVal = 'null';
-      valClass += ' null'; // Красный цвет
-    } 
-    else if (typeof rawVal === 'boolean') {
+      valClass += ' null';
+    } else if (typeof rawVal === 'boolean') {
       displayVal = rawVal ? 'TRUE' : 'FALSE';
-    } 
-    else if (typeof rawVal === 'number') {
-      // Если это timestamp, показываем как есть или переводим в секунды (опционально)
+    } else if (typeof rawVal === 'number') {
       if (key === 'timestamp') {
-         displayVal = (rawVal / 1000).toFixed(2) + ' s';
+        displayVal = (rawVal / 1000).toFixed(2) + ' s';
       } else {
-         // Округляем дробные до 4 знаков, целые оставляем как есть
-         displayVal = Number.isInteger(rawVal) ? rawVal : parseFloat(rawVal.toFixed(4));
+        displayVal = Number.isInteger(rawVal) ? rawVal : parseFloat(rawVal.toFixed(4));
       }
     }
 
@@ -3600,7 +3738,7 @@ function updateDebugPanel() {
       </div>
     `;
   });
-  
+
   content.innerHTML = html;
 }
 
