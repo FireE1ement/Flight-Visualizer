@@ -310,7 +310,7 @@
   margin-right: 10px; /* отступ от других кнопок */
 }
 
-.path-btn {
+.path-btn, .toggle-btn {
   background: transparent;
   border: none;
   color: #94a3b8;
@@ -323,12 +323,12 @@
   justify-content: center;
 }
 
-.path-btn:hover {
+.path-btn:hover, .toggle-btn:hover {
   color: #fff;
   background: rgba(255,255,255,0.05);
 }
 
-.path-btn.active {
+.path-btn.active, .toggle-btn.active {
   background: #3b82f6; /* Активный синий */
   color: white;
   box-shadow: 0 1px 2px rgba(0,0,0,0.2);
@@ -354,7 +354,7 @@
   font-family: monospace;
   font-size: 14px;
   padding: 4px 0;
-  -moz-appearance: textfield; /* убрать стандартные стрелки */
+
 }
 #speed-input::-webkit-outer-spin-button,
 #speed-input::-webkit-inner-spin-button {
@@ -467,7 +467,7 @@
   </label>
 	<div class="divider"></div>
 
-<button id="btn-debug" class="debug-btn" onclick="toggleDebug()">🐞 Debug</button>
+<button id="btn-debug" class="debug-btn" onclick="toggleDebug()">🐞</button>
 
 
 	
@@ -483,11 +483,11 @@
 
     <div class="divider"></div>
 
-    <button onclick="skipTime(-10)" id="btn-b10" disabled>⏮ -10s</button>
-    <button onclick="skipTime(-1)"  id="btn-b1"  disabled>⏪ -1s</button>
+    <button onclick="skipTime(-10)" id="btn-b10" disabled>-10s</button>
+    <button onclick="skipTime(-1)"  id="btn-b1"  disabled>-1s</button>
     <input type="range" id="timeline" min="0" max="100" value="0" disabled>
-    <button onclick="skipTime(1)"  id="btn-f1"  disabled>+1s ⏩</button>
-    <button onclick="skipTime(10)" id="btn-f10" disabled>+10s ⏭</button>
+    <button onclick="skipTime(1)"  id="btn-f1"  disabled>+1s</button>
+    <button onclick="skipTime(10)" id="btn-f10" disabled>+10s</button>
 
     <span class="time-label" id="time-label">00:00 / 00:00</span>
 
@@ -497,33 +497,40 @@
       <input type="checkbox" id="dynamic-camera-chk"> Динамическая камера
     </label> -->
 
-    <label class="toggle-label">
-      <input type="checkbox" id="chk-gs" checked onchange="toggleGsCorridor()">
-      <span>Курс/глиссада (3D)</span>
-    </label>
+<!-- ГРУППА 1: Глиссада (Независимый переключатель) -->
+<div class="path-toggle-group">
+  <button id="btn-gs" class="toggle-btn active" onclick="toggleGsCorridor()" title="Курс/Глиссада (ILS)">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 22h20"></path>
+      <path d="M19 5L5 19"></path>
+    </svg>
+  </button>
+</div>
 
-    <div class="path-toggle-group">
-      <button class="path-btn active" data-mode="none" title="Скрыть путь">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M18 6L6 18M6 6l12 12"></path>
-        </svg>
-      </button>
-      <button class="path-btn" data-mode="trail" title="След за самолётом">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <path d="M2 12h5l3-5 4 10 3-5h5"/>
-        </svg>
-      </button>
-      <button class="path-btn" data-mode="full" title="Весь путь">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          <path d="M9 12l2 2 4-4" />
-        </svg>
-      </button>
-    </div>
+
+<!-- ГРУППА 2: Режим пути (Только одна из трех) -->
+<div class="path-toggle-group">
+  <button class="path-btn active" data-mode="none" title="Скрыть путь">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M18 6L6 18M6 6l12 12"></path>
+    </svg>
+  </button>
+  <button class="path-btn" data-mode="trail" title="След за самолётом">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+       <path d="M2 12h5l3-5 4 10 3-5h5"/>
+    </svg>
+  </button>
+  <button class="path-btn" data-mode="full" title="Весь путь">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  </button>
+</div>
 
     <div class="divider"></div>
 
-    <span style="color:#cbd5e1; font-size:13px;">Скорость:</span>
+    <span style="color:#cbd5e1; font-size:13px;"></span>
     <div class="control-group">
       <span style="margin-right: 8px; color: #94a3b8; font-size: 14px;">Скорость:</span>
     <div class="control-group speed-input-group">
@@ -561,6 +568,9 @@
 
 
 
+
+
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -571,12 +581,8 @@
 // ================================================================
 const FPS = 32;
 const FRAME_MS = 1000 / FPS;
-const GS_ANGLE_DEG = 3; // стандартная глиссада
-const HEIGHT_PER_NM = 300; // ft на 1 морскую милю при 3°
 const GEAR_TRANSITION_SEC = 2;
 const GEAR_TRANSITION_FRAMES = GEAR_TRANSITION_SEC * FPS;
-const CAM_LERP_POS = 0.05;  // Инерция перемещения
-const CAM_LERP_LOOK = 0.1;  // Инерция поворота взгляда
 
 
 // Целевые параметры самолета (обновляются редко, из данных)
@@ -587,16 +593,10 @@ let targetPlaneQuat = new THREE.Quaternion();
 let targetPitch = 0, targetRoll = 0, targetYaw = 0; 
 let isDynamicCamera = false; // Состояние чекбокса
 let smoothedTarget = new THREE.Vector3(); // Сглаженная цель (куда смотрят контролы)
-let smoothedCameraPos = new THREE.Vector3(); // Сглаженная позиция камеры (если нужно)
 let isCameraInitialized = false; // Флаг первой инициализации
-let camPos = new THREE.Vector3(); // Текущая позиция камеры
-let camTarget = new THREE.Vector3(); // Текущая точка, куда смотрит камера
 let gearFrac = 1;      // 0..1, фактическое положение
 let targetGearFrac = 1;
 let noseStrut, mainStrutL, mainStrutR, nWheel, mWheelL, mWheelR;
-let strutOriginalY = { nose: -2.5, mainL: -2.5, mainR: -2.5 }; // Исходные позиции
-let wheelOriginalY = { nose: -3.5, mainL: -3.8, mainR: -3.8 };
-let strutCompression = 0; // 0-1 (сжатие)
 let selectedHeading = 263;
 let flightData = [];
 let totalFrames = 0;
@@ -605,9 +605,6 @@ let isPlaying = false;
 let playbackSpeed = 1;
 let timerId = null;
 
-let lastWindUpdateMs = 0;
-let cachedWindDir = 0;
-let cachedWindSpd = 0;
 let pathMode = 'none'; // 'none', 'trail', 'full'
 
 // three.js
@@ -643,7 +640,8 @@ window.addEventListener("load", () => {
   initTabs();
   initSelectedHeading();
   initPathControls();
-  document.getElementById('debug-panel').style.display = 'none';
+  const dbg = document.getElementById('debug-panel');
+  if (dbg) dbg.style.display = 'none';
   isDebugVisible = false;
 });
 
@@ -1338,14 +1336,17 @@ function createAirplane() {
 }
 
 
+function toggleGsCorridor() {
+  const btn = document.getElementById("btn-gs");
+  btn.classList.toggle("active"); // Просто переключаем класс у ЭТОЙ кнопки
+  
+  gsVisible = btn.classList.contains("active");
+  
+  if (locPlane) locPlane.visible = gsVisible;
+  if (gsPlane) gsPlane.visible = gsVisible;
+  if (renderer && camera3d) renderer.render(scene, camera3d);
+}
 
-
-	function toggleGsCorridor() {
-	  gsVisible = document.getElementById("chk-gs").checked;
-	  if (locPlane) locPlane.visible = gsVisible;
-	  if (gsPlane) gsPlane.visible = gsVisible;
-	  if (renderer && camera3d) renderer.render(scene, camera3d);
-	}
 
   function updatePathVisibility() {
   if (!trailGroup) return;
@@ -1622,15 +1623,6 @@ function drawPFD(data) {
   
   // Status - левый нижний угол
   drawStatus(ctx, margin, h - margin - 10, data, scale);
-}
-
-function drawTopBar(ctx, w, data, scale = 1) {
-  ctx.fillStyle = '#4a5568';
-  ctx.fillRect(0, 0, w, 30 * scale);
-  ctx.font = `bold ${Math.round(12 * scale)}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#10b981';
-  ctx.fillText('SINGLE CH', w / 2, 20 * scale);
 }
 
 function drawDME(ctx, x, y, data, scale = 1) {
@@ -2270,7 +2262,6 @@ function handleFile(e) {
       }
 
       const columns = Object.keys(jsonData[0]);
-      console.log(`Найдено столбцов: ${columns.length}`);
 
       // 1. Трансформация: Массив объектов -> Объект массивов
       let processedData = {};
@@ -2300,11 +2291,9 @@ function handleFile(e) {
       const timeData = processedData[timeKey]; // Массив времени
 
       if (hcorKey && processedData[hcorKey]) {
-          console.log(`Обработка высоты ${hcorKey}...`);
           
           // ШАГ 1: Физическая фильтрация (удаление выбросов против физики)
           if (vsKey && processedData[vsKey]) {
-              console.log(`Применяю Smart VS Filter...`);
               processedData[hcorKey] = filterAltitudeByVS(
                   processedData[hcorKey], 
                   processedData[vsKey], 
@@ -2328,7 +2317,6 @@ function handleFile(e) {
       let finalData = {}; 
 
       if (origHz === targetHz) {
-          console.log(`Частота уже ${targetHz} Гц, копируем данные.`);
           columns.forEach(col => {
               if (col !== timeKey) {
                   finalData[`i.${col}`] = processedData[col];
@@ -2484,7 +2472,6 @@ if (gearStr === null || gearStr === undefined || gearStr === '') {
 
       // 2. Если не нашли, вычисляем по траектории захода
       if (!foundHdn && flightData.length > 0) {
-        console.log("Auto-detecting Runway Heading from final approach...");
         let touchdownIdx = flightData.findIndex(d => d.radioAltitude !== null && d.radioAltitude <= -4);
         if (touchdownIdx === -1) touchdownIdx = flightData.length - 1;
         let minRA = Infinity;
@@ -2582,7 +2569,6 @@ for (let i = 0; i < processedData.length; i++) {
                 let avgDeg = (avgRad * 180) / Math.PI;
                 if (avgDeg < 0) avgDeg += 360;
                 selectedHeading = parseFloat(avgDeg.toFixed(2)); 
-                console.log(`Detected RWY HDG: ${selectedHeading}° (based on ${count} samples)`);
             }
         }
       }
@@ -2660,49 +2646,6 @@ for (let i = 0; i < processedData.length; i++) {
   reader.readAsArrayBuffer(file);
 }
 
-// <!-- function interpolateData(data) { -->
-//   <!-- if (data.length < 2) return data; -->
-//   <!-- const t0 = data[0].timestamp; -->
-//   <!-- const t1 = data[data.length - 1].timestamp; -->
-//   <!-- const total = t1 - t0; -->
-//   <!-- const frames = Math.ceil(total / FRAME_MS); -->
-//   <!-- const out = []; -->
-//   <!-- for (let i = 0; i < frames; i++) { -->
-//     <!-- const t = t0 + i * FRAME_MS; -->
-//     <!-- let j2 = data.findIndex(d => d.timestamp >= t); -->
-//     <!-- if (j2 === -1) { out.push({ ...data[data.length - 1], timestamp: t }); continue; } -->
-//     <!-- if (j2 === 0) { out.push({ ...data[0], timestamp: t }); continue; } -->
-//     <!-- const j1 = j2 - 1; -->
-//     <!-- const d1 = data[j1], d2 = data[j2]; -->
-//     <!-- const k = (t - d1.timestamp) / (d2.timestamp - d1.timestamp); -->
-  
-// <!-- out.push({ -->
-//   <!-- timestamp: t, -->
-//   <!-- pitch: lerp(d1.pitch, d2.pitch, k), -->
-//   <!-- roll: lerp(d1.roll, d2.roll, k), -->
-//   <!-- heading: lerpAngle(d1.heading, d2.heading, k), -->
-//   <!-- airspeed: lerp(d1.airspeed, d2.airspeed, k), -->
-//   <!-- groundSpeed: lerp(d1.groundSpeed, d2.groundSpeed, k), -->
-//   <!-- verticalSpeed: lerp(d1.verticalSpeed, d2.verticalSpeed, k), -->
-//   <!-- locDeviation: mixOpt(d1.locDeviation, d2.locDeviation, k), -->
-//   <!-- gsDeviation: mixOpt(d1.gsDeviation, d2.gsDeviation, k), -->
-//   <!-- windSpeed: lerp(d1.windSpeed, d2.windSpeed, k), -->
-//   <!-- windDirection: lerpAngle(d1.windDirection, d2.windDirection, k), -->
-//   <!-- onGround: d1.onGround || d2.onGround, -->
-//   <!-- radioAltitude: lerp(d1.radioAltitude, d2.radioAltitude, k), -->
-//   <!-- altitude: lerp(d1.altitude || 0, d2.altitude || 0, k), -->
-//   <!-- distanceFromTouchdown: lerp(d1.distanceFromTouchdown || 0, d2.distanceFromTouchdown || 0, k), -->
-//   <!-- // Интерполируем DME, если оба значения не null -->
-//   <!-- distanceToThresholdNM: (d1.distanceToThresholdNM !== null && d2.distanceToThresholdNM !== null) -->
-//     <!-- ? lerp(d1.distanceToThresholdNM, d2.distanceToThresholdNM, k) -->
-//     <!-- : (d1.distanceToThresholdNM !== null ? d1.distanceToThresholdNM : d2.distanceToThresholdNM) -->
-// <!-- }); -->
-
-//   <!-- } -->
-//   <!-- return out; -->
-// <!-- } -->
-
-
 // ================================================================
 // РАСЧЕТ ДИСТАНЦИИ, ВЕКТОРОВ И КОРРЕКЦИИ ВЫСОТЫ / ИНТЕГРАЛА
 // ================================================================
@@ -2730,7 +2673,6 @@ function calculateDistanceAndHeight() {
 
   if (flightData.length === 0) return;
 
-  console.log("Начинаю расчет (Чистая физика + Синхронизация по RadioAlt)...");
 
   // --- ПОИСК ТОЧКИ КАСАНИЯ ДЛЯ ГОРИЗОНТАЛЬНОЙ КИНЕМАТИКИ ---
   // 1. Поиск точки касания (строго по высоте <= 4 фута)
@@ -3077,8 +3019,7 @@ function recomputeIntegratedHeightFromVS() {
     }
   }
 
-  console.log('VS integration done. Ref index =', refIndex,
-              'RA_ref =', raRef, 'delta =', delta);
+
 }
 
 
@@ -3103,39 +3044,11 @@ function recomputeIntegratedHeightFromVS() {
 
     if (bestIdx !== -1 && minLocDev < 0.05) { // Если нашли достаточно точное пересечение оси (0.05 точки)
         const d = flightData[bestIdx];
-        
-        // В текущей системе координат (построенной по старому Heading)
-        // самолёт находится в точке (d.xPos, d.zPos).
-        // А должен быть на оси (X=0), так как LOCdev=0.
-        
-        // Значит, вся траектория повернута неверно.
-        // Угол ошибки:
-        // atan2(x, z) дает угол, на который точка отклонена от оси Z.
-        // Нам нужно повернуть ось Z так, чтобы она прошла через эту точку.
-        
+
         const errorAngleRad = Math.atan2(d.xPos, d.zPos);
         const errorAngleDeg = errorAngleRad * 180 / Math.PI;
 
-        console.log(`LOC Auto-Correction: Found LOC capture at index ${bestIdx}.`);
-        console.log(`Current X: ${d.xPos.toFixed(1)}, Z: ${d.zPos.toFixed(1)}`);
-        console.log(`Correction Angle: ${errorAngleDeg.toFixed(2)} degrees`);
-
         // Применяем коррекцию
-        // Если xPos > 0 (справа), значит ось полосы "левее", чем мы думали?
-        // Или мы "правее".
-        // Поворот координат на угол alpha:
-        // X' = X cos a - Z sin a
-        // Нам нужно, чтобы X' стал 0.
-        
-        // Проще: мы просто добавляем ошибку к selectedHeading.
-        // Если мы справа (X>0), значит реальный курс полосы должен быть "правее" (больше), 
-        // чтобы ось повернулась к нам? Нет, наоборот.
-        // Давайте проверим знаком. 
-        // Если selectedHeading=90, мы летим на восток.
-        // X > 0 (мы южнее оси).
-        // LOC говорит "ты на оси". Значит ось на самом деле смотрит на нас (южнее).
-        // Значит курс полосы должен быть больше (скажем 95).
-        
         // Формула: NewHeading = OldHeading + ErrorAngleDeg
         const newHeading = selectedHeading - errorAngleDeg;
         
@@ -3145,7 +3058,6 @@ function recomputeIntegratedHeightFromVS() {
         
         console.log(`New Runway Heading: ${selectedHeading}`);
         
-        // ВАЖНО: Перезапускаем расчет физики с новым курсом
         // Чтобы не зациклиться, можно передать флаг или просто вызвать один раз
         return true; // Correction applied
     }
@@ -3512,6 +3424,7 @@ function initPathControls() {
       
       updatePathVisibility(); // Функция обновления
     });
+
   });
 }
 
@@ -3575,67 +3488,6 @@ function initSelectedHeading() {
       updateAllViews(); 
     }
   });
-}
-
-
-
-function updateRunwayNumber() {
-  // 1. Вычисляем цифру из текущего selectedHeading
-  // Если heading 0 (не задан), рисуем дефолт (например 36 или пустой)
-  let headingToUse = selectedHeading || 260; // Дефолт 260 (26), если 0
-  let numberMesh;
-  let num = Math.round(headingToUse / 10);
-  if (num === 0) num = 36; 
-  if (num > 36) num -= 36; // На случай странных значений > 360
-  
-  const text = num.toString().padStart(2, '0');
-  console.log(`Updating Runway Number to: ${text} (Hdg: ${headingToUse})`);
-
-  // 2. Удаляем старый меш
-  if (numberMesh) {
-    scene.remove(numberMesh);
-    if (numberMesh.material.map) numberMesh.material.map.dispose();
-    if (numberMesh.material) numberMesh.material.dispose();
-    if (numberMesh.geometry) numberMesh.geometry.dispose();
-  }
-
-  // 3. Рисуем текстуру
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  
-  ctx.fillStyle = 'rgba(0,0,0,0)'; 
-  ctx.clearRect(0, 0, 256, 256);
-  
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 140px Arial'; // Чуть меньше, чтобы точно влезало
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  
-  // Поворот цифры (чтобы читалась при подлете)
-  ctx.translate(128, 128);
-  ctx.rotate(-Math.PI / 2); 
-  ctx.fillText(text, 0, 0);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-
-  const geom = new THREE.PlaneGeometry(12, 12);
-  const mat = new THREE.MeshBasicMaterial({ 
-    map: tex, 
-    transparent: true,
-    opacity: 0.9
-  });
-  
-  numberMesh = new THREE.Mesh(geom, mat);
-  numberMesh.rotation.x = -Math.PI / 2;
-  
-  // 4. Фиксированная позиция
-  numberMesh.position.set(0, 0.05, -40); // Z = -40
-  numberMesh.renderOrder = 3;
-
-  scene.add(numberMesh);
 }
 
 function roundTo4(num) {
@@ -3779,7 +3631,6 @@ function filterAltitudeByVS(altArray, vsArray, timeArray) {
         if (vs < -100 && (currAlt - prevAlt) > 10) {
             // Явное противоречие: снижение > 100fpm, а высота выросла
             isValid = false;
-            // console.log(`Anomaly at ${i}: Climbing while descending. Prev: ${prevAlt}, Curr: ${currAlt}, VS: ${vs}`);
         } else if (Math.abs(currAlt - predictedAlt) > margin) {
             // Слишком большое отклонение от прогноза
             isValid = false;
@@ -3880,4 +3731,3 @@ window.addEventListener('keydown', (e) => {
 </script>
 </body>
 </html>
-
