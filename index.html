@@ -478,7 +478,6 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M2 22h20"></path>
                   <path d="M19 5L5 19"></path>
-                  <path d="M15 5h4v4"></path>
                 </svg>
               </button>
             </div>
@@ -619,7 +618,7 @@ let smoothedTarget = new THREE.Vector3(); // Сглаженная цель (ку
 let isCameraInitialized = false; // Флаг первой инициализации
 let gearFrac = 1;      // 0..1, фактическое положение
 let targetGearFrac = 1;
-let noseStrut, mainStrutL, mainStrutR, nWheel, mWheelL, mWheelR;
+let mainStrutR, nWheel, mWheelL, mWheelR;
 let selectedHeading = 263;
 let flightData = [];
 let totalFrames = 0;
@@ -1302,6 +1301,29 @@ function createAirplane() {
   lStab.castShadow = true;
   airplane3d.add(lStab);
 
+  function createDualWheels() {
+  const bogie = new THREE.Group();
+      
+      // Левое колесо в паре
+      const w1 = new THREE.Mesh(wheelGeom, matDark);
+      w1.position.z = 0.3; // Смещение по оси оси колес (Z в локальных координатах стойки, если стойка вертикальна)
+      // Если у вас wheelGeom ориентирован "диском" по Z, возможно придется повернуть
+      
+      // Правое колесо в паре
+      const w2 = new THREE.Mesh(wheelGeom, matDark);
+      w2.position.z = -0.3; 
+
+      // Ось между колесами (опционально)
+      const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.6, 8), matMetal);
+      axle.rotation.x = Math.PI / 2; // Цилиндр лежит горизонтально
+      
+      bogie.add(w1);
+      bogie.add(w2);
+      bogie.add(axle);
+      
+      return bogie;
+    }
+
     // ---- НОСОВОЕ ШАССИ ----
     const nosePivot = new THREE.Group();
     nosePivot.name = 'nosePivot';
@@ -1314,12 +1336,13 @@ function createAirplane() {
     noseStrut.position.set(0, -1.0, 0);    // вниз от шарнира
     noseStrut.name = 'noseStrut';
 
-    const nWheel = new THREE.Mesh(wheelGeom, matDark);
-    nWheel.position.set(0, -2.0, 0);
-    nWheel.name = 'nWheel';
+    // Создаем спарку колес
+    const nWheelGroup = createDualWheels();
+    nWheelGroup.name = 'nWheel'; 
+    nWheelGroup.position.set(0, -2.0, 0); // Внизу стойки
 
     nosePivot.add(noseStrut);
-    nosePivot.add(nWheel);
+    nosePivot.add(nWheelGroup);
     airplane3d.add(nosePivot);
 
     // ---- ЛЕВОЕ ГЛАВНОЕ ----
@@ -1334,22 +1357,29 @@ function createAirplane() {
     mainStrutL.position.set(0, -1.25, 0);
     mainStrutL.name = 'mainStrutL';
 
-    const mWheelL = new THREE.Mesh(wheelGeom, matDark);
-    mWheelL.position.set(0, -2.5, 0);
-    mWheelL.name = 'mWheelL';
+    // Спарка для левой стойки
+    const mWheelGroupL = createDualWheels();
+    mWheelGroupL.name = 'mWheelL';
+    mWheelGroupL.position.set(0, -2.5, 0);
 
     mainPivotL.add(mainStrutL);
-    mainPivotL.add(mWheelL);
+    mainPivotL.add(mWheelGroupL);
     airplane3d.add(mainPivotL);
 
     // ---- ПРАВОЕ ГЛАВНОЕ ----
+    // Клонируем левую группу полностью (вместе с новыми двойными колесами)
     const mainPivotR = mainPivotL.clone();
     mainPivotR.name = 'mainPivotR';
     mainPivotR.position.set(-1, 0, -3.0);
-    mainPivotR.getObjectByName('mainStrutL').name = 'mainStrutR';
-    mainPivotR.getObjectByName('mWheelL').name    = 'mWheelR';
-    airplane3d.add(mainPivotR);
+    
+    // Переименовываем внутренности для порядка (хотя clone копирует структуру)
+    const strR = mainPivotR.getObjectByName('mainStrutL');
+    if(strR) strR.name = 'mainStrutR';
+    
+    const whR = mainPivotR.getObjectByName('mWheelL');
+    if(whR) whR.name = 'mWheelR';
 
+    airplane3d.add(mainPivotR);
   // ФИНАЛ
   airplane3d.rotation.y = Math.PI / 2;
   const gearHeight = 4.2;
