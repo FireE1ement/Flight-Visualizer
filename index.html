@@ -493,6 +493,10 @@
 
     <div class="divider"></div>
 
+    <!-- <label class="camera-mode-label">
+      <input type="checkbox" id="dynamic-camera-chk"> Динамическая камера
+    </label> -->
+
     <label class="toggle-label">
       <input type="checkbox" id="chk-gs" checked onchange="toggleGsCorridor()">
       <span>Курс/глиссада (3D)</span>
@@ -571,7 +575,22 @@ const GS_ANGLE_DEG = 3; // стандартная глиссада
 const HEIGHT_PER_NM = 300; // ft на 1 морскую милю при 3°
 const GEAR_TRANSITION_SEC = 2;
 const GEAR_TRANSITION_FRAMES = GEAR_TRANSITION_SEC * FPS;
+const CAM_LERP_POS = 0.05;  // Инерция перемещения
+const CAM_LERP_LOOK = 0.1;  // Инерция поворота взгляда
 
+
+// Целевые параметры самолета (обновляются редко, из данных)
+let targetPlanePos = new THREE.Vector3();
+let targetPlaneQuat = new THREE.Quaternion();
+
+// Переменная для хранения "сырых" данных поворота, чтобы считать кватернион
+let targetPitch = 0, targetRoll = 0, targetYaw = 0; 
+let isDynamicCamera = false; // Состояние чекбокса
+let smoothedTarget = new THREE.Vector3(); // Сглаженная цель (куда смотрят контролы)
+let smoothedCameraPos = new THREE.Vector3(); // Сглаженная позиция камеры (если нужно)
+let isCameraInitialized = false; // Флаг первой инициализации
+let camPos = new THREE.Vector3(); // Текущая позиция камеры
+let camTarget = new THREE.Vector3(); // Текущая точка, куда смотрит камера
 let gearFrac = 1;      // 0..1, фактическое положение
 let targetGearFrac = 1;
 let noseStrut, mainStrutL, mainStrutR, nWheel, mWheelL, mWheelR;
@@ -652,6 +671,7 @@ function initTabs() {
   });
 }
 
+
 // -------------------------------------------------
 // 3D сцена
 // -------------------------------------------------
@@ -703,6 +723,19 @@ orbitControls.maxPolarAngle = Math.PI / 2 + 0.3;
 orbitControls.autoRotate = false;  // Отключаем автоповорот
 
 
+// Обработчик чекбокса
+const dcChk = document.getElementById('dynamic-camera-chk');
+if (dcChk) {
+  dcChk.addEventListener('change', (e) => {
+    isDynamicCamera = e.target.checked;
+    // Сброс инерции при переключении
+    if (airplane3d) {
+      smoothedTarget.copy(airplane3d.position);
+      if (orbitControls) orbitControls.target.copy(airplane3d.position);
+    }
+  });
+}
+
 
   createGround();
   createRunway();
@@ -747,16 +780,25 @@ function createGround() {
 function animate3D() {
   requestAnimationFrame(animate3D);
   
-  // Обновляем позицию камеры
-  if (airplane3d && orbitControls && camera3d) {
-    updateCamera();
+  if (airplane3d) {
+      // --- ИНТЕРПОЛЯЦИЯ САМОЛЕТА ---
+      // Если идет воспроизведение, плавно двигаем самолет к targetPlanePos
+      // Коэффициент 0.3 обеспечивает быстрое, но плавное следование (сглаживает 32Гц рывки)
+      if (isPlaying) {
+          airplane3d.position.lerp(targetPlanePos, 0.3);
+          airplane3d.quaternion.slerp(targetPlaneQuat, 0.3);
+      }
+      
+      // Обновляем позицию камеры (она теперь следит за ПЛАВНЫМ самолетом)
+      if (orbitControls && camera3d) {
+          updateCamera();
+      }
 
-    // === ДОБАВЛЕНО: Двигаем землю за самолетом ===
-    if (window.dynamicGround) {
-        window.dynamicGround.position.x = airplane3d.position.x;
-        window.dynamicGround.position.z = airplane3d.position.z;
-    }
-    // =============================================
+      // Двигаем землю за самолетом
+      if (window.dynamicGround) {
+          window.dynamicGround.position.x = airplane3d.position.x;
+          window.dynamicGround.position.z = airplane3d.position.z;
+      }
   }
   
   if (renderer && camera3d && scene) {
@@ -1391,52 +1433,44 @@ function update3D(d) {
   const zPos = sceneTouchdownZ + d.zPos;
   const gearHeight = 4.2;
 
+  // --- ШАССИ (оставляем без изменений) ---
   if (typeof d.gearDownCmd === 'number') {
     targetGearFrac = d.gearDownCmd ? 1 : 0;
   }
-
-  // плавный переход за 2 секунды
   const step = 1 / GEAR_TRANSITION_FRAMES;
   if (gearFrac < targetGearFrac) gearFrac = Math.min(gearFrac + step, targetGearFrac);
   else if (gearFrac > targetGearFrac) gearFrac = Math.max(gearFrac - step, targetGearFrac);
-
-  // обновляем ориентацию шасси
   updateGearDeploy(gearFrac);
 
-  // высота колёс над землёй из данных
   let hFt = d.integratedHeightFt;
   if (typeof hFt !== 'number') hFt = d.radioAltitude || 0;
-  if (hFt < 0) hFt = 0;
+  
+  // Раскомментируй эту строку, если хочешь запретить уход под землю визуально:
+  // if (hFt < 0) hFt = 0; 
+  
   const wheelHeightM = hFt * 0.3048;
-
-  // сначала считаем компрессию по высоте колёс
   const dy = updateGearCompressionByWheel(wheelHeightM) || 0;
-
-  // центр = высота колёс + геометрическая высота шасси - фактическая компрессия
   let centerHeightM = wheelHeightM + gearHeight - dy;
 
-  // не даём фюзеляжу «провалиться» ниже максимальной компрессии
   const minCenter = gearHeight - MAX_COMP_M;
   if (centerHeightM < minCenter) centerHeightM = minCenter;
 
+  // --- 1. ЗАПИСЫВАЕМ ЦЕЛЕВУЮ ПОЗИЦИЮ ---
+  // Вместо airplane3d.position.set(...)
+  targetPlanePos.set(xPos, centerHeightM, zPos);
 
-  airplane3d.position.set(xPos, centerHeightM, zPos);
 
+  // --- 2. ЗАПИСЫВАЕМ ЦЕЛЕВОЕ ВРАЩЕНИЕ ---
+  const runwayHeading = selectedHeading || 0;
+  let planeHeading = d.heading || 0;
 
-  // Вращение модели
-  const runwayHeading = selectedHeading || 0;        // 0..360
-  let planeHeading = d.heading || 0;                 // 0..360
+  planeHeading = (planeHeading % 360 + 360) % 360;
+  const rwHdgNorm = (runwayHeading % 360 + 360) % 360;
 
-// нормализуем оба в 0..360
-planeHeading = (planeHeading % 360 + 360) % 360;
-const rwHdgNorm = (runwayHeading % 360 + 360) % 360;
+  let headingDiff = planeHeading - rwHdgNorm;
+  if (headingDiff > 180)  headingDiff -= 360;
+  if (headingDiff < -180) headingDiff += 360;
 
-// разность с приведением к диапазону [-180; +180]
-let headingDiff = planeHeading - rwHdgNorm;
-if (headingDiff > 180)  headingDiff -= 360;
-if (headingDiff < -180) headingDiff += 360;
-
-// yaw: нос самолёта вдоль собственного курса, смещённого от полосы на headingDiff
   const yaw = Math.PI / 2 - THREE.MathUtils.degToRad(headingDiff);
   const pitch = THREE.MathUtils.degToRad(d.pitch);
   const roll = THREE.MathUtils.degToRad(d.roll);
@@ -1445,34 +1479,67 @@ if (headingDiff < -180) headingDiff += 360;
   const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), pitch);
   const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 
-  airplane3d.quaternion.copy(qYaw);
-  airplane3d.quaternion.multiply(qPitch);
-  airplane3d.quaternion.multiply(qRoll);
+  // Собираем итоговый кватернион во временную переменную
+  const tempQuat = new THREE.Quaternion().copy(qYaw);
+  tempQuat.multiply(qPitch);
+  tempQuat.multiply(qRoll);
+  
+  // Сохраняем в глобальную цель
+  targetPlaneQuat.copy(tempQuat);
 
-
+  // --- ВАЖНО: Если мы НЕ в режиме Play (пауза/скраббинг), применяем мгновенно ---
+  // Чтобы при ручном перематывании самолет не "плыл"
+  if (!isPlaying) {
+     airplane3d.position.copy(targetPlanePos);
+     airplane3d.quaternion.copy(targetPlaneQuat);
+  }
 }
-
 
 function updateCamera() {
   if (!airplane3d || !orbitControls || !camera3d) return;
-  
-  // Получаем текущую сферическую позицию камеры относительно target
-  const spherical = new THREE.Spherical();
-  const offset = new THREE.Vector3();
-  
-  // Вычисляем offset от старого target
-  offset.copy(camera3d.position).sub(orbitControls.target);
-  spherical.setFromVector3(offset);
-  
-  // Обновляем target на позицию самолёта
-  orbitControls.target.copy(airplane3d.position);
-  
-  // Применяем тот же offset к новой позиции
-  offset.setFromSpherical(spherical);
-  camera3d.position.copy(airplane3d.position).add(offset);
-  
-  // Камера смотрит на самолёт
-  camera3d.lookAt(airplane3d.position);
+
+  const targetPos = airplane3d.position;
+
+  // Инициализация (первый запуск)
+  if (!isCameraInitialized) {
+    smoothedTarget.copy(targetPos);
+    orbitControls.target.copy(targetPos);
+    
+    // Если камера "дефолтная", ставим ее красиво сбоку
+    // (опционально, если не нравится - убери if)
+    if (camera3d.position.lengthSq() < 100 || (camera3d.position.x === 0 && camera3d.position.z === 100)) {
+        camera3d.position.copy(targetPos).add(new THREE.Vector3(-50, 20, 50));
+    }
+    
+    isCameraInitialized = true;
+    orbitControls.update();
+    return;
+  }
+
+  // Считаем текущий оффсет камеры от её цели (сохраняем вращение мышью)
+  const offset = new THREE.Vector3().copy(camera3d.position).sub(orbitControls.target);
+
+  if (isDynamicCamera) {
+    // ДИНАМИКА: Target лениво ползёт за самолетом
+    // 0.05 - сила инерции (чем меньше, тем сильнее отстает)
+    smoothedTarget.lerp(targetPos, 0.05);
+    
+    // Применяем ленивый таргет
+    orbitControls.target.copy(smoothedTarget);
+    
+    // Ставим камеру относительно ленивого таргета
+    camera3d.position.copy(smoothedTarget).add(offset);
+    
+  } else {
+    // ОБЫЧНЫЙ: Target жестко привязан
+    orbitControls.target.copy(targetPos);
+    camera3d.position.copy(targetPos).add(offset);
+    
+    // Синхронизируем, чтобы при включении не прыгало
+    smoothedTarget.copy(targetPos);
+  }
+
+  orbitControls.update();
 }
 
 // ========================================
@@ -2420,7 +2487,7 @@ if (gearStr === null || gearStr === undefined || gearStr === '') {
         console.log("Auto-detecting Runway Heading from final approach...");
         let touchdownIdx = flightData.findIndex(d => d.radioAltitude !== null && d.radioAltitude <= -4);
         if (touchdownIdx === -1) touchdownIdx = flightData.length - 1;
-        let minRA = 10000;
+        let minRA = Infinity;
         let touchdownIndex = -1;
         const fps = 32;
         const endWindow = Math.max(0, touchdownIdx - 5 * fps);
@@ -2524,7 +2591,7 @@ for (let i = 0; i < processedData.length; i++) {
       // Обновляем UI с найденным курсом
       document.getElementById('input-hdg').value = selectedHeading;
       createRunwayNumber(-40); 
-
+      
       calculateDistanceAndHeight(); // Первый проход (грубый)
 
   // Попытка уточнить по LOC
@@ -2532,65 +2599,47 @@ for (let i = 0; i < processedData.length; i++) {
         console.log("Runway Heading refined by LOC. Recalculating path...");
         calculateDistanceAndHeight(); // Второй проход (точный)
     }
+    recomputeIntegratedHeightFromVS();
+// // --- ИНТЕГРИРОВАНИЕ ВЕРТИКАЛЬНОЙ СКОРОСТИ ---
+// if (flightData && flightData.length > 0) {
+//   const dt = 1 / 32;
 
-  // --- ПРАВИЛЬНОЕ ИНТЕГРИРОВАНИЕ ОТ ПЕРВОГО RA <= -4 ---
-if (flightData && flightData.length > 0) {
-  const dt = 1 / 32;
+//   // 1. Ищем кадр первого касания RA <= -2 (если есть)
+//   let touchIndex = -1;
+//   for (let i = 0; i < flightData.length; i++) {
+//     const ra = flightData[i].radioAltitude;
+//     if (ra !== null && ra <= -2) {
+//       touchIndex = i;
+//       break;
+//     }
+//   }
 
-  // 1. Очистка
-  for (let i = 0; i < flightData.length; i++) {
-    delete flightData[i].integratedHeightFt;
-  }
+//   // 2. Базовый индекс для интегрирования
+//   const baseIndex = (touchIndex !== -1) ? touchIndex : 0;
 
-  // 2. Первый кадр RA <= -4
-  let touchIndex = -1;
-  for (let i = 0; i < flightData.length; i++) {
-    if (flightData[i].radioAltitude !== null && flightData[i].radioAltitude <= -2) {
-      touchIndex = i;
-      break;
-    }
-  }
+//   // 3. Начальное значение интеграла
+//   flightData[baseIndex].integratedHeightFt = 0;
 
-  if (touchIndex === -1) {
-    console.warn('RA <= -4 не найден');
-  } else {
-    console.log(`Касание: кадр ${touchIndex}, RA=${flightData[touchIndex].radioAltitude}`);
+//   // 4. Назад от baseIndex: H[i] = H[i+1] - VS[curr] * dt
+//   for (let i = baseIndex - 1; i >= 0; i--) {
+//     const curr = flightData[i];
+//     const next = flightData[i + 1];
+//     if (!curr || !next) continue;
 
-    // 3. H[touchIndex] = 0
-    flightData[touchIndex].integratedHeightFt = 0;
+//     const vsFPS = -(curr.verticalSpeed || 0) / 60; // фт/с
+//     curr.integratedHeightFt = (next.integratedHeightFt || 0) + vsFPS * dt;
+//   }
 
-    // 4. НАЗАД: H[i] = H[i+1] - VS[curr] * dt  (ИНВЕРСИЯ!)
-    for (let i = touchIndex - 1; i >= 0; i--) {
-      const curr = flightData[i];
-      const next = flightData[i + 1];
-      if (!curr || !next) continue;
+//   // 5. Вперёд от baseIndex: H[i] = H[i-1] + VS[prev] * dt
+//   for (let i = baseIndex + 1; i < flightData.length; i++) {
+//     const curr = flightData[i];
+//     const prev = flightData[i - 1];
+//     if (!curr || !prev) continue;
 
-      const vsFPS = -(curr.verticalSpeed || 0) / 60;  // ✅ ИНВЕРТИРОВАННЫЙ VS[curr]
-      curr.integratedHeightFt = (next.integratedHeightFt || 0) + vsFPS * dt;
-    }
-
-    // 5. ВПЕРЕД: H[i] = H[i-1] + VS[prev] * dt (без изменений)
-    for (let i = touchIndex + 1; i < flightData.length; i++) {
-      const curr = flightData[i];
-      const prev = flightData[i - 1];
-      if (!curr || !prev) continue;
-
-      const vsFPS = (prev.verticalSpeed || 0) / 60;
-      let hNew = (prev.integratedHeightFt || 0) + vsFPS * dt;
-      if (hNew < 0) hNew = 0;
-      curr.integratedHeightFt = hNew;
-    }
-
-    // 6. Финальная защита RA <= -4
-    for (let i = touchIndex; i < flightData.length; i++) {
-      if (flightData[i].radioAltitude !== null && flightData[i].radioAltitude <= -2) {
-        flightData[i].integratedHeightFt = 0;
-      }
-    }
-
-    console.log(`ПРОВЕРКА: кадр ${touchIndex-1}: H=${flightData[touchIndex-1]?.integratedHeightFt}`);
-  }
-}
+//     const vsFPS = (prev.verticalSpeed || 0) / 60;
+//     curr.integratedHeightFt = (prev.integratedHeightFt || 0) + vsFPS * dt;
+//   }
+// }
 
       totalFrames = flightData.length;
       currentFrame = 0;
@@ -2654,310 +2703,384 @@ if (flightData && flightData.length > 0) {
 // <!-- } -->
 
 
-    function calculateDistanceAndHeight() {
-	
-    let hasTouched = false;
-	for (let i = 0; i < flightData.length; i++) {
-	const d = flightData[i];
-	const ra = d.radioAltitude;
+// ================================================================
+// РАСЧЕТ ДИСТАНЦИИ, ВЕКТОРОВ И КОРРЕКЦИИ ВЫСОТЫ / ИНТЕГРАЛА
+// ================================================================
+function calculateDistanceAndHeight() {
 
-  if (!hasTouched) {
-    // До первого касания
-    d.raGround = (ra !== null && ra <= -4);
-    if (d.raGround) hasTouched = true;
-  } else {
-    // После первого касания держим "на земле", пока RA снова не станет > 0
-    if (ra !== null && ra > 0) {
-      d.raGround = false; // отрыв / снова в воздухе
+  // --- МАРКЕРЫ "НА ЗЕМЛЕ" ПО RA ---
+  let hasTouched = false;
+  for (let i = 0; i < flightData.length; i++) {
+    const d  = flightData[i];
+    const ra = d.radioAltitude;
+
+    if (!hasTouched) {
+      // До первого касания
+      d.raGround = (ra !== null && ra <= -4);
+      if (d.raGround) hasTouched = true;
     } else {
-      d.raGround = true;  // всё ещё на земле
+      // После первого касания держим "на земле", пока RA снова не станет > 0
+      if (ra !== null && ra > 0) {
+        d.raGround = false; // отрыв / снова в воздухе
+      } else {
+        d.raGround = true;  // всё ещё на земле
+      }
     }
   }
-}
-		
-		if (flightData.length === 0) return;
-        
-        console.log("Начинаю расчет (Чистая физика + Синхронизация по RadioAlt)...");
 
-// 1. Поиск точки касания (строго по высоте <= 4 фута)
-let touchdownIndex = flightData.findIndex(d => d.radioAltitude !== null && d.radioAltitude <= 4);
+  if (flightData.length === 0) return;
 
-// Fallback
-if (touchdownIndex === -1) {
-  touchdownIndex = flightData.findIndex(d => d.onGround);
-}
-		
-		let everTouched = false;
-		let everLiftedAfterTouch = false;
-		let altitudeBias = 0;
+  console.log("Начинаю расчет (Чистая физика + Синхронизация по RadioAlt)...");
+
+  // --- ПОИСК ТОЧКИ КАСАНИЯ ДЛЯ ГОРИЗОНТАЛЬНОЙ КИНЕМАТИКИ ---
+  // 1. Поиск точки касания (строго по высоте <= 4 фута)
+  let touchdownIndex = flightData.findIndex(
+    d => d.radioAltitude !== null && d.radioAltitude <= 4
+  );
+
+  // Fallback
+  if (touchdownIndex === -1) {
+    touchdownIndex = flightData.findIndex(d => d.onGround);
+  }
+
+  // --- ЛОГИКА stickyOnGround / everTouched / everLiftedAfterTouch ---
+  let everTouched = false;
+  let everLiftedAfterTouch = false;
+  let altitudeBias = 0;
+
+  for (let i = 0; i < flightData.length; i++) {
+    const d  = flightData[i];
+    const ra = d.radioAltitude;
+
+    if (ra !== null && ra <= -4) {
+      // Первое реальное касание
+      everTouched = true;
+    }
+
+    if (everTouched && ra !== null && ra > 0) {
+      // После касания RA снова > 0 — значит был отрыв
+      everLiftedAfterTouch = true;
+    }
+
+    if (!everTouched) {
+      d.stickyOnGround = false;
+    } else if (everTouched && !everLiftedAfterTouch) {
+      d.stickyOnGround = true;
+    } else {
+      d.stickyOnGround = (ra !== null && ra <= -2);
+    }
+  }
+
+  // --- ВЫБОР TOUCHDOWN / МИНИМУМ RA ДЛЯ ГОРИЗОНТАЛИ ---
+  let zPosCorrection = 0; // Смещение по Z (в метрах)
+
+  if (touchdownIndex === -1) {
+    // БАЗОВЫЙ ВАРИАНТ: посадки нет (проход/уход)
+    let minAlt     = Infinity;
+    let minAltIndex = -1;
+
+    flightData.forEach((d, i) => {
+      const ra = (d.radioAltitude !== null) ? d.radioAltitude : 9999;
+      if (ra < minAlt) {
+        minAlt      = ra;
+        touchdownIndex = i;   // "точка касания" = точка минимума RA
+        minAltIndex    = i;
+      }
+    });
+
+    if (touchdownIndex !== -1) {
+      // Коррекция баровысоты как раньше
+      altitudeBias =
+        flightData[touchdownIndex].altitude -
+        (flightData[touchdownIndex].radioAltitude || 0);
+
+      // Синхронизация по DME (если есть)
+      const dMin  = flightData[minAltIndex];
+      const dmeVal = dMin.distanceToThresholdNM;
+
+      if (dmeVal !== null && dmeVal !== undefined && dmeVal > 0) {
+        console.log(`Посадки нет. Синхронизация по DME: ${dmeVal} NM`);
+        zPosCorrection = dmeVal * 1852; // м
+      }
+    }
+  } else {
+    // СЛУЧАЙ С ПОСАДКОЙ
+    // Ищем минимальную баро-высоту на пробеге и по ней делаем ноль
+    let minAltOnGround = Infinity;
+    for (let i = touchdownIndex; i < flightData.length; i++) {
+      const ra = flightData[i].radioAltitude;
+      if (ra === null) continue;
+      if (ra <= 0) { // считаем землёй RA <= 0
+        const alt = flightData[i].altitude;
+        if (alt !== null && alt < minAltOnGround) {
+          minAltOnGround = alt;
+        }
+      }
+    }
+    if (minAltOnGround !== Infinity) {
+      altitudeBias = minAltOnGround;
+    } else {
+      altitudeBias = flightData[touchdownIndex].altitude;
+    }
+  }
+
+// --- КОРРЕКЦИЯ БАРОВЫСОТЫ ---
+flightData.forEach(d => {
+  d.correctedAltitude = d.altitude - altitudeBias;
+  // НЕ трогаем d.integratedHeightFt
+});
+
+// --- ПРИВЯЗКА ИНТЕГРАЛА VS К RA ---
+// ищем кадр касания (RA <= -2) и кадр минимальной RA
+let touchIdxForInt = -1;
+let minRA = Infinity;
+let minRAIndex = -1;
 
 for (let i = 0; i < flightData.length; i++) {
-  const d = flightData[i];
+  const d  = flightData[i];
   const ra = d.radioAltitude;
 
-  if (ra !== null && ra <= -4) {
-    // Первое реальное касание
-    everTouched = true;
-  }
-
-  if (everTouched && ra !== null && ra > 0) {
-    // После касания RA снова > 0 — значит был отрыв
-    everLiftedAfterTouch = true;
-  }
-
-  if (!everTouched) {
-    // До первого касания — обычная логика
-    d.stickyOnGround = false;
-  } else if (everTouched && !everLiftedAfterTouch) {
-    // После первого касания и пока не было RA>0 — считаем, что всё время на земле
-    d.stickyOnGround = true;
-  } else {
-    // После того как был отрыв — дальше смотрим только на актуальный RA
-    d.stickyOnGround = (ra !== null && ra <= -2);
+  if (ra !== null) {
+    if (ra <= -2 && touchIdxForInt === -1) {
+      touchIdxForInt = i;             // была реальная посадка
+    }
+    if (ra < minRA) {
+      minRA      = ra;
+      minRAIndex = i;                  // минимум RA (для пролёта)
+    }
   }
 }
-        // БАЗОВЫЙ ВАРИАНТ: если вообще не нашли касание (проход/уход на второй круг)
-        let zPosCorrection = 0; // Смещение по Z (в метрах)
 
-        if (touchdownIndex === -1) {
-          let minAlt = Infinity;
-          let minAltIndex = -1;
+let refIndex = -1;
+if (touchIdxForInt !== -1) {
+  // СЛУЧАЙ С ПОСАДКОЙ: привязываем интеграл к RA в точке касания (земля)
+  refIndex = touchIdxForInt;
+} else if (minRAIndex !== -1) {
+  // БЕЗ ПОСАДКИ: привязываем к минимальной RA
+  refIndex = minRAIndex;
+}
 
-          flightData.forEach((d, i) => {
-            const ra = (d.radioAltitude !== null) ? d.radioAltitude : 9999;
-            if (ra < minAlt) { 
-                minAlt = ra; 
-                touchdownIndex = i; // "Точка касания" - это просто точка минимума
-                minAltIndex = i;
-            }
-          });
+if (refIndex !== -1) {
+  const ref    = flightData[refIndex];
+  const raRef  = (typeof ref.radioAltitude === 'number') ? ref.radioAltitude : 0;
+  const intRef = (typeof ref.integratedHeightFt === 'number') ? ref.integratedHeightFt : 0;
 
-          // Коррекция высоты (как и раньше)
-          if (touchdownIndex !== -1) {
-              altitudeBias = flightData[touchdownIndex].altitude - (flightData[touchdownIndex].radioAltitude || 0);
-          
-              // === НОВАЯ ЛОГИКА СИНХРОНИЗАЦИИ ПО DMEl ===
-              // Смотрим DMEl в точке минимума
-              const dMin = flightData[minAltIndex];
-              // DMEl (или DME) в морских милях
-              const dmeVal = dMin.distanceToThresholdNM; 
+  // хотим: integratedHeightFt(refIndex) == raRef
+  const delta = intRef - raRef;
 
-              if (dmeVal !== null && dmeVal !== undefined && dmeVal > 0) {
-                  console.log(`Посадки нет. Синхронизация по DME: ${dmeVal} NM`);
-                  // Если DME=2.5NM, значит мы за 2.5NM до торца. 
-                  // В системе координат: Торец = 0 (или -270 в сцене). Мы должны быть в - (2.5 * 1852).
-                  // Значит в точке минимума (touchdownIndex) zPos должен стать не 0, а -DME.
-                  zPosCorrection = (dmeVal * 1852); 
-              }
-          }
-          
-        } else {
-            // ... (Старый блок ELSE для случая с посадкой) ...
-             // НОВАЯ ЛОГИКА: ищем минимальную баро-высоту на пробеге и по ней делаем ноль
-              let minAltOnGround = Infinity;
-              for (let i = touchdownIndex; i < flightData.length; i++) {
-                const ra = flightData[i].radioAltitude;
-                if (ra === null) continue;
-                if (ra <= 0) { // считаем землей RA <= 0
-                  const alt = flightData[i].altitude;
-                  if (alt !== null && alt < minAltOnGround) {
-                    minAltOnGround = alt;
-                  }
-                }
-              }
-              if (minAltOnGround !== Infinity) {
-                altitudeBias = minAltOnGround;
-              } else {
-                altitudeBias = flightData[touchdownIndex].altitude;
-              }
-        }
-
-
-  
-
-
-
-        // Коррекция высоты
-        flightData.forEach(d => {
-            d.correctedAltitude = d.altitude - altitudeBias;
-            
-            if (!d.integratedHeightFt) {
-          d.integratedHeightFt = d.correctedAltitude;
-            }
-
-        });
-
-        // 2. Расчет векторов
-flightData.forEach(d => {
-            // Базовый угол (куда смотрит нос)
-            let rawTrack = d.heading;
-            
-            // Рассчитываем "Идеальный аэродинамический дрейф" (как если бы мы летели)
-            let aerodynamiDrift = 0;
-            
-            // Считаем дрейф, только если есть скорость (защита от деления на 0)
-            if (d.airspeed > 10 && d.windSpeed && d.windDirection) {
-                 const hdgRad = (d.heading * Math.PI) / 180;
-                 const windRad = ((d.windDirection + 180) * Math.PI) / 180;
-                 
-                 const vAirX = d.airspeed * Math.sin(hdgRad);
-                 const vAirY = d.airspeed * Math.cos(hdgRad);
-                 const vWindX = d.windSpeed * Math.sin(windRad);
-                 const vWindY = d.windSpeed * Math.cos(windRad);
-                 
-                 // Вектор путевой скорости (Air + Wind)
-                 const vGroundX = vAirX + vWindX;
-                 const vGroundY = vAirY + vWindY;
-                 
-                 let trackWithWind = (Math.atan2(vGroundX, vGroundY) * 180) / Math.PI;
-                 if (trackWithWind < 0) trackWithWind += 360;
-                 
-                 // Разница между Треком и Курсом = Угол сноса
-                 let diff = trackWithWind - d.heading;
-                 if (diff > 180) diff -= 360;
-                 if (diff < -180) diff += 360;
-                 aerodynamiDrift = diff;
-            }
-
-            // === ГЛАВНАЯ ЛОГИКА ===
-            // Определяем силу воздействия ветра (Wind Effect Factor)
-            let windFactor = 0;
-
-            const isOnGroundReal = d.raGround;
-
-            if (!isOnGroundReal) {
-                // В ВОЗДУХЕ: Ветер действует на 100%
-                windFactor = 1.0;
-            } else {
-                // НА ЗЕМЛЕ: Ветер действует в зависимости от скорости
-                // > 130 узлов -> Factor 1.0 (еще летим над полосой/касание)
-                // < 100 узлов -> Factor 0.0 (едем как трамвай)
-                // Между 100 и 130 -> Плавное снижение
-                
-                const speed = d.airspeed; // Лучше использовать groundSpeed на пробеге, но airspeed тоже ок
-                
-                // Верхний порог (ветер 100%): выше 130 узлов
-                const upperSpeed = 130;
-                // Нижний порог (ветер 0%): ниже 50 узлов
-                const lowerSpeed = 80; 
-                
-                if (speed >= upperSpeed) {
-                    windFactor = 1.0;
-                } else if (speed <= lowerSpeed) {
-                    windFactor = 0.0;
-                } else {
-                    // Интерполяция между 50 и 130
-                    // Диапазон = 130 - 50 = 80
-                    windFactor = (speed - lowerSpeed) / (upperSpeed - lowerSpeed);
-                }
-
-            }
-            
-            // Итоговый угол сноса
-            const finalDrift = aerodynamiDrift * windFactor;
-            
-            // Итоговый Track
-            rawTrack = d.heading + finalDrift;
-            
-            // Нормализация 0-360
-            if (rawTrack >= 360) rawTrack -= 360;
-            if (rawTrack < 0) rawTrack += 360;
-
-            d.targetTrack = rawTrack;
-            // Для инерции считаем "землей" только полное сцепление (фактор < 0.5)
-            d.isCalculatedGround = (windFactor < 0.5); 
-        });
-
-        // 3. Сглаживание (Инерция 60 тонн)
-        // Инициализация первым вектором
-        let currentVecX = Math.sin(flightData[0].targetTrack * Math.PI / 180);
-        let currentVecY = Math.cos(flightData[0].targetTrack * Math.PI / 180);
-        
-        const inertiaFactor = 0.05; // Коэффициент плавности
-
-        for (let i = 0; i < flightData.length; i++) {
-            const d = flightData[i];
-            
-            // На земле инерция чуть меньше (сцепление лучше), в воздухе больше
-            const effectiveInertia = d.isCalculatedGround ? 0.2 : inertiaFactor;
-
-            const targetRad = d.targetTrack * Math.PI / 180;
-            const targetX = Math.sin(targetRad);
-            const targetY = Math.cos(targetRad);
-            
-            // Экспоненциальное сглаживание вектора
-            currentVecX += (targetX - currentVecX) * effectiveInertia;
-            currentVecY += (targetY - currentVecY) * effectiveInertia;
-            
-            // Нормализация
-            const len = Math.sqrt(currentVecX**2 + currentVecY**2);
-            currentVecX /= len;
-            currentVecY /= len;
-            
-            let smoothedTrack = (Math.atan2(currentVecX, currentVecY) * 180) / Math.PI;
-            if (smoothedTrack < 0) smoothedTrack += 360;
-            
-            d.smoothedTrack = smoothedTrack;
-        }
-
-        // 4. Интеграция позиции
-        flightData[touchdownIndex].xPos = 0; 
-        flightData[touchdownIndex].zPos = zPosCorrection; // Применяем коррекцию (0 или -DME)
-        flightData[touchdownIndex].distanceFromTouchdown = zPosCorrection * 3.28084;
-
-		const calculateStep = (dataPoint, dtSeconds) => {
-			const gsMps = (dataPoint.groundSpeed || 0) * 0.514444; 
-			let trackToUse = dataPoint.targetTrack; // smoothedTrack или targetTrack,
-
-			// Нормализация разницы трека относительно курса ВПП в диапазон -180..180
-			let trackDelta = trackToUse - selectedHeading;
-			if (trackDelta > 180) trackDelta -= 360;
-			if (trackDelta < -180) trackDelta += 360;
-
-			const trackRad = (trackDelta * Math.PI) / 180;
-
-			const distStep = gsMps * dtSeconds;
-			return {
-				dX: distStep * Math.sin(trackRad),
-				dZ: distStep * Math.cos(trackRad)
-			};
-		};
-        // НАЗАД (ваши знаки +)
-        for (let i = touchdownIndex - 1; i >= 0; i--) {
-            const curr = flightData[i];
-            const next = flightData[i+1];
-            const dt = (next.timestamp - curr.timestamp) / 1000;
-            const step = calculateStep(curr, dt);
-            
-            curr.xPos = next.xPos - step.dX; 
-            curr.zPos = next.zPos + step.dZ; 
-            curr.distanceFromTouchdown = curr.zPos * 3.28084;
-        }
-
-        // ВПЕРЕД (ваши знаки -)
-        for (let i = touchdownIndex + 1; i < flightData.length; i++) {
-            const curr = flightData[i];
-            const prev = flightData[i-1];
-            const dt = (curr.timestamp - prev.timestamp) / 1000;
-            const step = calculateStep(prev, dt);
-            
-            curr.xPos = prev.xPos + step.dX;
-            curr.zPos = prev.zPos - step.dZ;
-            curr.distanceFromTouchdown = curr.zPos * 3.28084;
-        }
-        
-        flightData.forEach(d => {
-            const distToThrMeters = d.zPos - 300; 
-            d.distanceToThresholdNM = distToThrMeters / 1852;
-        });
-        
-        pathMeta.totalDistanceNM = Math.max(...flightData.map(d => d.distanceToThresholdNM));
-        
-        rebuildTrail();
-        updateTrailDrawRange();
-
-
+  for (let i = 0; i < flightData.length; i++) {
+    const d = flightData[i];
+    if (typeof d.integratedHeightFt === 'number') {
+      d.integratedHeightFt = d.integratedHeightFt - delta;
     }
+  }
+}
+
+
+
+  // --- РАСЧЕТ ВЕКТОРОВ ВЕТРА / TRACK ---
+  flightData.forEach(d => {
+    let rawTrack = d.heading;
+    let aerodynamiDrift = 0;
+
+    if (d.airspeed > 10 && d.windSpeed && d.windDirection) {
+      const hdgRad  = (d.heading * Math.PI) / 180;
+      const windRad = ((d.windDirection + 180) * Math.PI) / 180;
+
+      const vAirX  = d.airspeed * Math.sin(hdgRad);
+      const vAirY  = d.airspeed * Math.cos(hdgRad);
+      const vWindX = d.windSpeed * Math.sin(windRad);
+      const vWindY = d.windSpeed * Math.cos(windRad);
+
+      const vGroundX = vAirX + vWindX;
+      const vGroundY = vAirY + vWindY;
+
+      let trackWithWind = (Math.atan2(vGroundX, vGroundY) * 180) / Math.PI;
+      if (trackWithWind < 0) trackWithWind += 360;
+
+      let diff = trackWithWind - d.heading;
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
+      aerodynamiDrift = diff;
+    }
+
+    let windFactor = 0;
+    const isOnGroundReal = d.raGround;
+
+    if (!isOnGroundReal) {
+      windFactor = 1.0;
+    } else {
+      const speed = d.airspeed;
+      const upperSpeed = 130;
+      const lowerSpeed = 80;
+
+      if (speed >= upperSpeed) {
+        windFactor = 1.0;
+      } else if (speed <= lowerSpeed) {
+        windFactor = 0.0;
+      } else {
+        windFactor = (speed - lowerSpeed) / (upperSpeed - lowerSpeed);
+      }
+    }
+
+    const finalDrift = aerodynamiDrift * windFactor;
+    rawTrack = d.heading + finalDrift;
+
+    if (rawTrack >= 360) rawTrack -= 360;
+    if (rawTrack < 0) rawTrack += 360;
+
+    d.targetTrack      = rawTrack;
+    d.isCalculatedGround = (windFactor < 0.5);
+  });
+
+  // --- СГЛАЖИВАНИЕ ТРЕКА (ИНЕРЦИЯ) ---
+  let currentVecX = Math.sin(flightData[0].targetTrack * Math.PI / 180);
+  let currentVecY = Math.cos(flightData[0].targetTrack * Math.PI / 180);
+
+  const inertiaFactor = 0.05;
+
+  for (let i = 0; i < flightData.length; i++) {
+    const d = flightData[i];
+
+    const effectiveInertia = d.isCalculatedGround ? 0.2 : inertiaFactor;
+
+    const targetRad = d.targetTrack * Math.PI / 180;
+    const targetX   = Math.sin(targetRad);
+    const targetY   = Math.cos(targetRad);
+
+    currentVecX += (targetX - currentVecX) * effectiveInertia;
+    currentVecY += (targetY - currentVecY) * effectiveInertia;
+
+    const len = Math.sqrt(currentVecX**2 + currentVecY**2);
+    currentVecX /= len;
+    currentVecY /= len;
+
+    let smoothedTrack = (Math.atan2(currentVecX, currentVecY) * 180) / Math.PI;
+    if (smoothedTrack < 0) smoothedTrack += 360;
+
+    d.smoothedTrack = smoothedTrack;
+  }
+  const touchdownOffset = -100;
+  // --- ИНТЕГРАЦИЯ ПОЗИЦИИ ---
+flightData[touchdownIndex].xPos = 0;
+flightData[touchdownIndex].zPos = zPosCorrection - touchdownOffset;
+flightData[touchdownIndex].distanceFromTouchdown = (zPosCorrection - touchdownOffset) * 3.28084;
+
+  const calculateStep = (dataPoint, dtSeconds) => {
+    const gsMps    = (dataPoint.groundSpeed || 0) * 0.514444;
+    let trackToUse = dataPoint.smoothedTrack; // targetTrack или smoothedTrack
+
+    let trackDelta = trackToUse - selectedHeading;
+    if (trackDelta > 180) trackDelta -= 360;
+    if (trackDelta < -180) trackDelta += 360;
+
+    const trackRad = (trackDelta * Math.PI) / 180;
+
+    const distStep = gsMps * dtSeconds;
+    return {
+      dX: distStep * Math.sin(trackRad),
+      dZ: distStep * Math.cos(trackRad),
+    };
+  };
+
+  // НАЗАД
+  for (let i = touchdownIndex - 1; i >= 0; i--) {
+    const curr = flightData[i];
+    const next = flightData[i + 1];
+    const dt   = (next.timestamp - curr.timestamp) / 1000;
+    const step = calculateStep(curr, dt);
+
+    curr.xPos = next.xPos - step.dX;
+    curr.zPos = next.zPos + step.dZ;
+    curr.distanceFromTouchdown = curr.zPos * 3.28084;
+  }
+
+  // ВПЕРЕД
+  for (let i = touchdownIndex + 1; i < flightData.length; i++) {
+    const curr = flightData[i];
+    const prev = flightData[i - 1];
+    const dt   = (curr.timestamp - prev.timestamp) / 1000;
+    const step = calculateStep(prev, dt);
+
+    curr.xPos = prev.xPos + step.dX;
+    curr.zPos = prev.zPos - step.dZ;
+    curr.distanceFromTouchdown = curr.zPos * 3.28084;
+  }
+
+  // дистанция до торца
+  flightData.forEach(d => {
+    const distToThrMeters = d.zPos - 300;
+    d.distanceToThresholdNM = distToThrMeters / 1852;
+  });
+
+  pathMeta.totalDistanceNM = Math.max(
+    ...flightData.map(d => d.distanceToThresholdNM)
+  );
+
+  rebuildTrail();
+  updateTrailDrawRange();
+}
+
+
+function recomputeIntegratedHeightFromVS() {
+  if (!flightData || !flightData.length) return;
+
+  const dt = 1 / 32; // 32 Гц
+
+  // ---- 1. ЧИСТЫЙ ИНТЕГРАЛ VS ----
+  flightData[0].integratedHeightFt = 0;
+
+  for (let i = 1; i < flightData.length; i++) {
+    const prev = flightData[i - 1];
+    const curr = flightData[i];
+    const vsFPS = (prev.verticalSpeed || 0) / 60; // ft/s
+    curr.integratedHeightFt = (prev.integratedHeightFt || 0) + vsFPS * dt;
+  }
+
+  // ---- 2. ПОИСК ОПОРНОГО КАДРА ПО RA ----
+  let touchIdx = -1;
+  let minRA = Infinity;
+  let minRAIndex = -1;
+
+  for (let i = 0; i < flightData.length; i++) {
+    const ra = flightData[i].radioAltitude;
+    if (ra !== null && ra !== undefined) {
+      if (ra <= -2 && touchIdx === -1) {
+        touchIdx = i; // первая реальная посадка
+      }
+      if (ra < minRA) {
+        minRA = ra;
+        minRAIndex = i; // минимум RA
+      }
+    }
+  }
+
+  // если нет вообще ни одного RA — просто выходим, оставляем интеграл как есть
+  if (minRAIndex === -1 && touchIdx === -1) return;
+
+  // опорный кадр:
+  //   если была посадка → кадр касания
+  //   если не было → кадр минимальной RA
+  const refIndex = (touchIdx !== -1) ? touchIdx : minRAIndex;
+  const ref      = flightData[refIndex];
+
+  const raRef  = (typeof ref.radioAltitude === 'number') ? ref.radioAltitude : 0;
+  const intRef = (typeof ref.integratedHeightFt === 'number') ? ref.integratedHeightFt : 0;
+
+  // хотим: integratedHeightFt(refIndex) == raRef
+  const delta = intRef - raRef;
+
+  for (let i = 0; i < flightData.length; i++) {
+    const d = flightData[i];
+    if (typeof d.integratedHeightFt === 'number') {
+      d.integratedHeightFt = d.integratedHeightFt - delta;
+    }
+  }
+
+  console.log('VS integration done. Ref index =', refIndex,
+              'RA_ref =', raRef, 'delta =', delta);
+}
+
 
     function refineRunwayHeadingUsingLOC() {
     // 1. Ищем валидные данные LOC
@@ -3121,7 +3244,7 @@ function rebuildTrail() {
     const z = sceneTouchdownZ + d.zPos;
     
     // Расчет высоты (как в update3D)
-    let yVal = 2; // gearHeight
+    let yVal = 4.2; // gearHeight
     if (!d.raGround) {
         const altMeters = (d.integratedHeightFt || 0) * 0.3048;
         yVal = Math.max(2, altMeters);
@@ -3742,7 +3865,17 @@ function updateDebugPanel() {
   content.innerHTML = html;
 }
 
+// Воспроизведение/пауза по пробелу
+window.addEventListener('keydown', (e) => {
+  // игнор, если фокус в инпуте/поле ввода
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
 
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();    // не прокручиваем страницу
+    togglePlay();          // та же логика, что у кнопки Play
+  }
+});
 
 </script>
 </body>
